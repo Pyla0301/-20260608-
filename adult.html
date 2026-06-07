@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人生模擬器 - 出社會職場篇</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <!-- 載入外部的事件題庫與輔助函式 -->
+  <script src="events.js"></script>
+
+  <style>
+    /* 職場風格背景：帶有日出金與都會灰的專業漸層 */
+    body { margin: 0; font-family: 'M PLUS Rounded 1c', '微軟正黑體', sans-serif; background: linear-gradient(135deg, #e2e8f0, #cbd5e1, #fed7aa); min-height: 100vh; display: flex; flex-direction: column; }
+    
+    .top-bar { display: flex; justify-content: space-around; background: rgba(15, 23, 42, 0.8); color: #fff; padding: 15px; font-size: 1.2rem; text-shadow: 1px 1px 2px #000; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 10;}
+    .stat { display: flex; align-items: center; gap: 8px; }
+    .stat-val { font-weight: bold; color: #fde047; }
+
+    .game-container { display: flex; flex-wrap: wrap; max-width: 1100px; margin: 30px auto; background: rgba(255, 255, 255, 0.95); border-radius: 20px; overflow: hidden; box-shadow: 0 15px 40px rgba(51, 65, 85, 0.3); }
+    
+    .camera-view { position: relative; width: 640px; height: 480px; background: #000; flex-shrink: 0; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #overlay-canvas { z-index: 5; } 
+    
+    .dialogue-box { padding: 30px; flex-grow: 1; flex-basis: 350px; display: flex; flex-direction: column; }
+    h2 { color: #334155; margin-top: 0; font-size: 1.6rem; border-bottom: 2px dashed #94a3b8; padding-bottom: 10px;}
+    p.desc { font-size: 1.15rem; line-height: 1.6; color: #333; margin-bottom: 20px;}
+    .task-list { background: #f0fdfa; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; }
+    .task-list ul { margin: 0; padding-left: 20px; line-height: 1.5; color: #4b5563;}
+    .task-list li { margin-bottom: 10px; }
+    .timer { color: #e11d48; font-weight: bold; font-size: 1.3rem; text-align: center; margin-bottom: 15px; height: 30px;}
+    
+    /* 職業選擇按鈕樣式 */
+    .job-btn { display: block; width: 100%; margin: 15px 0; padding: 18px; font-size: 1.3rem; font-family: inherit; font-weight: bold; border-radius: 12px; border: 2px solid #0f172a; background: white; color: #0f172a; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .job-btn:hover { background: #0f172a; color: white; transform: translateY(-3px); box-shadow: 0 8px 15px rgba(15, 23, 42, 0.3); }
+    
+    .btn { margin-top: auto; padding: 15px; font-size: 1.3rem; font-family: inherit; font-weight: bold; background: linear-gradient(120deg, #475569, #1e293b); color: white; border: none; border-radius: 15px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; text-align: center; }
+    .btn:hover { transform: scale(1.02); box-shadow: 0 5px 15px rgba(30, 41, 59, 0.4); }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    #loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: white; display: flex; justify-content: center; align-items: center; font-size: 1.5rem; z-index: 100; transition: opacity 0.5s; }
+  </style>
+</head>
+<body>
+
+  <div id="loading-screen">正在啟動 MediaPipe 視覺引擎與載入職場履歷...</div>
+
+  <div class="top-bar">
+    <div class="stat">💖 健康: <span id="s-health" class="stat-val">100</span></div>
+    <div class="stat">💰 財富: <span id="s-wealth" class="stat-val">50</span></div>
+    <div class="stat">💡 智慧: <span id="s-wisdom" class="stat-val">50</span></div>
+    <div class="stat">✨ 魅力: <span id="s-charm" class="stat-val">50</span></div>
+    <div class="stat">⚔️ 勇氣: <span id="s-courage" class="stat-val">50</span></div>
+  </div>
+
+  <div class="game-container">
+    <div class="camera-view">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay-canvas" width="640" height="480"></canvas>
+    </div>
+    <div class="dialogue-box">
+      <h2 id="d-title">載入中...</h2>
+      <div id="d-content">
+         <p id="d-desc" class="desc">請稍候。</p>
+      </div>
+      <button id="btn-action" class="btn" style="display:none;"></button>
+    </div>
+  </div>
+
+  <script>
+    let playerStats = { health: 100, wealth: 50, wisdom: 50, charm: 50, courage: 50, bonds: [], profession: "", partner: "", childPersonality: "" };
+    let selectedEvents = [], currentEventIndex = 0, activeEvent = null, isPlayingEvent = false;
+    let timeRemaining = 0, eventTimer = null, eventState = {}, currentActiveBranches = [];
+    let prevHands = [], latestHandVel = 0, latestFace = null, latestHands = [], latestRawFace = null;
+
+    const cvs = document.getElementById('overlay-canvas');
+    const ctx = cvs.getContext('2d');
+    const btnAction = document.getElementById('btn-action');
+    const dContent = document.getElementById('d-content');
+
+    dContent.addEventListener('click', (event) => {
+      const btn = event.target.closest('.job-btn');
+      if (!btn) return;
+      if (btn.dataset.job) {
+        selectJob(btn.dataset.job);
+      } else if (btn.dataset.bond) {
+        selectPartner(btn.dataset.bond);
+      }
+    });
+
+    const savedStats = localStorage.getItem('playerAttributes');
+    if (savedStats) {
+      const parsed = JSON.parse(savedStats);
+      for(let k in playerStats) if(parsed[k] !== undefined) playerStats[k] = parsed[k];
+      
+      // 確保每次重新載入 adult.html 時，清除前一次測試遺留的伴侶與孩子記憶，避免直接跳到結算
+      playerStats.partner = "";
+      playerStats.childPersonality = "";
+      
+      if (!playerStats.bonds) playerStats.bonds = [];
+      
+      // 刷新網頁時，清除上一局在「職場」獲得的羈絆，只保留「校園」時期的羈絆
+      const adultBonds = ["布雷克", "伊安娜", "菲利克斯", "奧妮"];
+      playerStats.bonds = playerStats.bonds.filter(b => !adultBonds.includes(b));
+      localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+
+      updateStatsUI();
+    }
+
+    function updateStatsUI() {
+      document.getElementById('s-health').innerText = playerStats.health;
+      document.getElementById('s-wealth').innerText = playerStats.wealth;
+      document.getElementById('s-wisdom').innerText = playerStats.wisdom;
+      document.getElementById('s-charm').innerText = playerStats.charm;
+      document.getElementById('s-courage').innerText = playerStats.courage;
+    }
+
+    // --- 分析屬性並產生應徵邀請函 ---
+    function getJobOffer() {
+        const w = playerStats.wisdom;
+        const c = playerStats.charm;
+        const r = playerStats.courage;
+        const maxStat = Math.max(w, c, r);
+        const minStat = Math.min(w, c, r);
+
+        if (w < 40 && c < 40 && r < 40) return { type: "📉 佛系躺平型", jobs: ["無憂無慮的躺平大師", "公園長椅哲學家"], desc: "出社會太麻煩了，你選擇了無欲無求的境界。" };
+        if (maxStat - minStat <= 10 && maxStat > 60) return { type: "⚖️ 完美全能型", jobs: ["命運幕後掌控者", "魔法學院院長"], desc: "你達到了完美的平衡，能優雅地克服任何危機。" };
+
+        let sorted = [ {name: 'wisdom', val: w}, {name: 'charm', val: c}, {name: 'courage', val: r} ].sort((a,b) => b.val - a.val);
+        let top1 = sorted[0].name; let top2 = sorted[1].name;
+
+        if (top1 === 'wisdom' && top2 === 'charm') return { type: "🔮 智慧主導型", jobs: ["AI 科技巨擘", "創新企業家"], desc: "你擁有天才般的腦袋與極佳的談判手腕。" };
+        if (top1 === 'wisdom' && top2 === 'courage') return { type: "🔮 智慧主導型", jobs: ["頂尖外科醫生", "傳奇白帽駭客"], desc: "你具備冷靜的分析能力，又敢在最危險的時刻做出果斷決策。" };
+        if (top1 === 'charm' && top2 === 'wisdom') return { type: "💋 魅力主導型", jobs: ["百萬極客網紅", "頂級王牌律師"], desc: "你自帶萬人迷光環，還懂得用深入淺出的方式講解複雜議題。" };
+        if (top1 === 'charm' && top2 === 'courage') return { type: "💋 魅力主導型", jobs: ["傳奇搖滾巨星", "奧斯卡影帝/影后"], desc: "舞台就是你的命！你用狂放不羈的勇氣與無懈可擊的魅力征服萬千粉絲。" };
+        if (top1 === 'courage' && top2 === 'wisdom') return { type: "⚔️ 勇氣主導型", jobs: ["極限探險家", "太空飛行員"], desc: "智商在線的硬漢！你敢挑戰沒人去過的宇宙深處或極地。" };
+        if (top1 === 'courage' && top2 === 'charm') return { type: "⚔️ 勇氣主導型", jobs: ["跨國特種特工", "頂級體育巨星"], desc: "你擁有無畏的心臟與高超的體能，每一次出任務都是眾人矚目的焦點。" };
+
+        return { type: "🏢 穩健發展型", jobs: ["資深專案經理", "自由接案大師"], desc: "你具備優秀的適應力，在社會的洪流中站穩了腳步。" };
+    }
+
+    function showJobSelection() {
+       const offer = getJobOffer();
+       document.getElementById('d-title').innerText = "✉️ 來自未來的應徵邀請函";
+       let html = `<p class="desc">根據你從小到大累積的性格與能力（${offer.type}），頂尖獵頭公司為你送來了兩份專屬的邀請函！</p>`;
+       html += `<p class="desc" style="color:#0f172a; font-weight:bold; background:#f1f5f9; padding:15px; border-left: 5px solid #0ea5e9;">${offer.desc}</p>`;
+       html += `<p class="desc">請選擇你的命運：</p>`;
+       html += `<button class="job-btn" data-job="${offer.jobs[0]}">💼 就職：${offer.jobs[0]}</button>`;
+       html += `<button class="job-btn" data-job="${offer.jobs[1]}">💼 就職：${offer.jobs[1]}</button>`;
+       document.getElementById('d-content').innerHTML = html;
+    }
+
+    function selectJob(jobName) {
+       playerStats.profession = jobName;
+       localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+       
+       document.getElementById('d-title').innerText = `🏆 恭喜成為【${jobName}】！`;
+       document.getElementById('d-content').innerHTML = `<p class="desc">你正式簽下了合約，穿上代表你職業的戰袍！<br><br>不過，職場的考驗才剛剛開始。機車的主管、難搞的客戶，還有可能在茶水間巧遇學生時期的初戀...<br><br><span style="color:#0ea5e9; font-weight:bold;">（準備好面對職場風暴了嗎？）</span></p>`;
+       
+       btnAction.style.display = "block";
+       btnAction.innerText = "開始第一天上班";
+       btnAction.onclick = () => {
+           let jobEvents = PROFESSION_EVENTS[jobName] || PROFESSION_EVENTS["AI 科技巨擘"];
+           // 隨機抽取 3 個共通事件（包含一般與戀愛），沒抽到就是運氣不好
+           let randomCommonEvents = [...COMMON_EVENTS].sort(() => 0.5 - Math.random()).slice(0, 3);
+           selectedEvents = [...jobEvents, ...randomCommonEvents].sort(() => 0.5 - Math.random());
+           currentEventIndex = 0;
+           startNextEvent();
+       };
+    }
+
+    // --- MediaPipe 引擎啟動 ---
+    const videoElement = document.getElementById('video');
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults((res) => {
+      if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+        latestRawFace = res.multiFaceLandmarks[0];
+        let faceW = dist(latestRawFace[234], latestRawFace[454]) || 1; 
+        let faceH = dist(latestRawFace[10], latestRawFace[152]) || 1;  
+        let mouthDist = dist(latestRawFace[13], latestRawFace[14]);    
+        let mouthRatio = mouthDist / faceH;
+        latestFace = {
+          isSmile: (dist(latestRawFace[61], latestRawFace[291]) / faceW) > 0.34, // 調高閾值，避免天然寬嘴角被誤判為微笑
+          isFrown: (dist(latestRawFace[107], latestRawFace[336]) / faceW) < 0.29, 
+          mouthOpen: mouthRatio > 0.010, 
+          eyesClosed: (dist(latestRawFace[159], latestRawFace[145]) / faceH) < 0.050 && (dist(latestRawFace[386], latestRawFace[374]) / faceH) < 0.050 
+        };
+      } 
+    });
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults((res) => {
+      if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        latestHands = res.multiHandLandmarks;
+        let vel = 0;
+        latestHands.forEach(hand => {
+          if (prevHands.length > 0) {
+            let minDist = Math.min(...prevHands.map(ph => dist(hand[9], ph[9])));
+            vel = Math.max(vel, minDist); 
+          }
+        });
+        latestHandVel = vel;
+        prevHands = latestHands;
+      } else { latestHands = []; latestHandVel = 0; prevHands = []; }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        try {
+          await faceMesh.send({image: videoElement});
+          await hands.send({image: videoElement});
+        } catch (err) {}
+      }, width: 640, height: 480
+    });
+
+    camera.start().then(() => {
+      document.getElementById('loading-screen').style.opacity = '0';
+      setTimeout(() => {
+          document.getElementById('loading-screen').style.display = 'none';
+          showJobSelection(); 
+          requestAnimationFrame(gameLoop);
+      }, 500);
+    });
+
+    function startNextEvent() {
+      if (currentEventIndex >= selectedEvents.length) {
+         if (!playerStats.partner) showMarriageSelection();
+         else showRetirement();
+         return;
+      }
+      
+      activeEvent = selectedEvents[currentEventIndex];
+      document.getElementById('d-title').innerText = activeEvent.title;
+      document.getElementById('d-content').innerHTML = `<p class="desc">${activeEvent.desc}</p><div id="d-tasks" class="task-list"></div><div id="d-timer" class="timer"></div>`;
+      
+      currentActiveBranches = [];
+      let taskHTML = "<ul>";
+      activeEvent.branches.forEach(b => {
+         let req = playerStats[b.reqType] >= b.reqVal;
+         let tName = b.reqType === 'wisdom' ? '智慧' : b.reqType === 'charm' ? '魅力' : b.reqType === 'courage' ? '勇氣' : '全能';
+         if (!req) {
+            taskHTML += `<li><span style="color:#0ea5e9; font-weight:bold;">[${b.name}檢定]</span>: <span style='color:#9ca3af'>🔒 ${tName} 不足 ${b.reqVal}</span></li>`;
+         } else {
+            currentActiveBranches.push(b);
+            taskHTML += `<li><span style="color:#0ea5e9; font-weight:bold;">[${b.name}檢定]</span>: ${b.task}</li>`;
+         }
+      });
+      taskHTML += "</ul>";
+      
+      document.getElementById('d-tasks').innerHTML = taskHTML;
+      document.getElementById('d-timer').innerText = `限時: ${activeEvent.time} 秒`;
+      
+      btnAction.innerText = "開始行動"; btnAction.disabled = false; btnAction.onclick = () => startChallenge();
+    }
+
+    function showMarriageSelection() {
+       document.body.classList.add("theme-marriage");
+       document.getElementById('d-title').innerText = "💍 邁向人生新階段：婚姻與家庭";
+       let html = `<p class="desc">職場的奮鬥暫告一段落，你開始思考人生的下一個階段。<br><br>`;
+       if (playerStats.bonds && playerStats.bonds.length > 0) {
+           html += `在過去的歲月裡，你與以下這些人建立起了深厚的感情。你想要與誰共度餘生？</p>`;
+           playerStats.bonds.forEach(bond => {
+               html += `<button class="job-btn bond-btn" data-bond="${bond}">💍 向 ${bond} 求婚</button>`;
+           });
+           html += `<button class="job-btn bond-btn" data-bond="享受單身">🚶‍♂️ 決定享受自由的單身生活</button>`;
+       } else {
+           html += `回首過去，你將大部分的時間都奉獻給了學業與工作，目前沒有特別親密的對象。<br>你想要嘗試去相親，還是享受自由的單身生活？</p>`;
+           html += `<button class="job-btn bond-btn" data-bond="相親對象">🤝 參加長輩安排的相親</button>`;
+           html += `<button class="job-btn bond-btn" data-bond="享受單身">🚶‍♂️ 決定享受自由的單身生活</button>`;
+       }
+       document.getElementById('d-content').innerHTML = html;
+       btnAction.style.display = "none";
+    }
+
+    function selectPartner(partnerName) {
+       playerStats.partner = partnerName;
+       
+       if (partnerName !== "享受單身" && !playerStats.childPersonality) {
+           const personalities = ["👼 乖巧天使型", "😈 混世魔王型", "🤓 高智商奇葩型"];
+           playerStats.childPersonality = personalities[Math.floor(Math.random() * personalities.length)];
+       }
+       
+       localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+       
+       if (partnerName === "享受單身") {
+           document.getElementById('d-title').innerText = `🚶‍♂️ 單身貴族！`;
+           document.getElementById('d-content').innerHTML = `<p class="desc">你選擇了不受拘束的生活，把時間與金錢都投資在自己熱愛的事物上，過得無比充實！</p>`;
+           btnAction.style.display = "block";
+           btnAction.innerText = "進入人生結算";
+           btnAction.onclick = () => showRetirement();
+       } else if (partnerName === "相親對象") {
+           document.getElementById('d-title').innerText = `🤝 平穩的家庭！`;
+           document.getElementById('d-content').innerHTML = `<p class="desc">透過介紹，你認識了一位性格溫和的對象。兩人雖然沒有轟轟烈烈的戀愛，但互相扶持，建立了一個平穩溫馨的家庭。</p>`;
+           document.getElementById('d-content').innerHTML = `<p class="desc">透過介紹，你認識了一位性格溫和的對象。兩人雖然沒有轟轟烈烈的戀愛，但互相扶持，建立了一個平穩溫馨的家庭。<br><br>婚後不久，你們迎來了愛情的結晶！孩子展現出了<span style="color:#10b981; font-weight:bold;">【${playerStats.childPersonality}】</span>的特質！</p>`;
+           btnAction.style.display = "block";
+           btnAction.innerText = "進入人生結算";
+           btnAction.onclick = () => showRetirement();
+           btnAction.innerText = "開始婚後生活";
+           btnAction.onclick = () => {
+               let childEvents = (typeof CHILD_EVENTS !== 'undefined' && playerStats.childPersonality) ? CHILD_EVENTS[playerStats.childPersonality] || [] : [];
+               selectedEvents = childEvents.sort(() => 0.5 - Math.random()).slice(0, 2);
+               currentEventIndex = 0;
+               startNextEvent();
+           };
+       } else {
+           document.getElementById('d-title').innerText = `💍 步入禮堂！`;
+           document.getElementById('d-content').innerHTML = `<p class="desc">你與 <span style="color:#ec4899; font-weight:bold;">${partnerName}</span> 攜手步入了婚姻的殿堂！<br><br>婚姻生活充滿了柴米油鹽與驚喜，並且你們也迎來了屬於自己的寶寶！孩子展現出了<span style="color:#10b981; font-weight:bold;">【${playerStats.childPersonality}】</span>的特質！<br><br>準備好面對婚後生活的考驗了嗎？</p>`;
+           btnAction.style.display = "block";
+           btnAction.innerText = "開始婚後生活";
+           btnAction.onclick = () => {
+               let partnerEvents = typeof MARRIAGE_EVENTS !== 'undefined' ? MARRIAGE_EVENTS[partnerName] || [] : [];
+               let childEvents = (typeof CHILD_EVENTS !== 'undefined' && playerStats.childPersonality) ? CHILD_EVENTS[playerStats.childPersonality] || [] : [];
+               
+               let normalEvents = partnerEvents.filter(e => !e.title.includes('大結局') && !e.title.includes('終結線'));
+               let endingEvent = partnerEvents.find(e => e.title.includes('大結局') || e.title.includes('終結線'));
+               selectedEvents = normalEvents.sort(() => 0.5 - Math.random()).slice(0, 3); // 隨機抽取 3 個日常事件
+               
+               let pool = [...normalEvents, ...childEvents];
+               selectedEvents = pool.sort(() => 0.5 - Math.random()).slice(0, 5); // 隨機抽取 5 個日常/養娃事件
+               
+               if (endingEvent) selectedEvents.push(endingEvent); // 如果有終極大結局，保證放在最後一關！
+               else if (pool.length > 5) selectedEvents.push(pool[5]);
+               currentEventIndex = 0;
+               startNextEvent();
+           };
+       }
+    }
+
+    function showRetirement() {
+       let retireTitle = playerStats.wealth > 500 ? "財富自由的人生贏家" : playerStats.wealth < 0 ? "負債累累的打工人" : "平穩退休的社會中堅";
+       let childText = playerStats.childPersonality ? `<br>孩子性格：<span style="color:#10b981; font-weight:bold;">${playerStats.childPersonality}</span>` : "";
+       let childStats = null;
+       
+       if (playerStats.childPersonality && playerStats.partner && playerStats.partner !== "享受單身") {
+           const partnerBaseStats = {
+               "莉莉安": { health: 70, wealth: 60, wisdom: 85, charm: 70, courage: 55 },
+               "萊利": { health: 85, wealth: 50, wisdom: 60, charm: 70, courage: 85 },
+               "艾斯": { health: 95, wealth: 60, wisdom: 55, charm: 80, courage: 80 },
+               "卡加莎": { health: 80, wealth: 40, wisdom: 45, charm: 75, courage: 95 },
+               "布雷克": { health: 70, wealth: 70, wisdom: 80, charm: 75, courage: 60 },
+               "伊安娜": { health: 85, wealth: 60, wisdom: 75, charm: 85, courage: 55 },
+               "菲利克斯": { health: 80, wealth: 500, wisdom: 75, charm: 65, courage: 85 },
+               "奧妮": { health: 80, wealth: 500, wisdom: 85, charm: 80, courage: 55 },
+               "相親對象": { health: 70, wealth: 50, wisdom: 60, charm: 60, courage: 60 }
+           };
+           const pStats = partnerBaseStats[playerStats.partner] || { health: 50, wealth: 50, wisdom: 50, charm: 50, courage: 50 };
+           childStats = {};
+           for (let k of ['health', 'wealth', 'wisdom', 'charm', 'courage']) {
+               let mutation = Math.floor(Math.random() * 21) - 10;
+               childStats[k] = Math.floor((playerStats[k] + pStats[k]) / 2) + mutation;
+           }
+           childText += `<br><span style="font-size:1rem; color:#4b5563;">👶 孩子最終基因 — 💖 健康: ${childStats.health} | 💰 財富: ${childStats.wealth} | 💡 智慧: ${childStats.wisdom} | ✨ 魅力: ${childStats.charm} | ⚔️ 勇氣: ${childStats.courage}</span>`;
+       }
+       
+       let bondsText = playerStats.bonds && playerStats.bonds.length > 0 ? `<br><br>💞 曾解鎖羈絆：<span style="color:#ec4899; font-weight:bold;">${playerStats.bonds.join('、')}</span>` : "";
+       
+       let healthDesc = "";
+       if (playerStats.health <= 0) healthDesc = "過度的拼搏與對身體的極度忽視，終於讓你付出了最慘烈的代價。在一個稀鬆平常的加班深夜，你的心臟發出了最後的抗議。你早早就離開了這個世界，享年不到四十五歲。你的名字成了同事口中的警世寓言，留下了無盡的遺憾。";
+       else if (playerStats.health < 40) healthDesc = "你雖然勉力活到了老年，但常年的不良習慣讓你的晚年生活幾乎都在醫院與藥罐子裡度過。每當季節交替，你的關節與氣管就會按時向你報到。你常常坐在輪椅上嘆氣，後悔年輕時沒有多愛惜自己一點。";
+       else if (playerStats.health < 80) healthDesc = "你擁有一個極其標準且平淡的肉體生涯。除了一些偶爾的感冒流鼻水，你平平安安地活到了七十多歲。晚年的你熱衷於在公園散步、跟鄰居下棋，在一個溫暖的春季午後，你在睡夢中安詳地與世長辭。";
+       else healthDesc = "你簡直是醫學界活生生的奇蹟！常年的規律生活（或是極其恐怖的抗壓體質）讓你活到了九十五歲高齡依然健步如飛。你甚至能跟你的曾孫一起打《跑跑卡丁車》，最後在子孫滿堂的簇擁下，帶著滿足的微笑仙逝。";
+
+       let wealthDesc = "";
+       if (playerStats.wealth < 0) wealthDesc = "你在財務管理上徹底失控。因為幾次盲目的投資、或者是家庭突發的巨額變故，你最終面臨了破產的命運，戶頭呈現一片絕望的赤字。你一生都在與帳單、催繳電話賽跑，離世時除了滿身的債務和破舊的手錶，什麼也沒留下。";
+       else if (playerStats.wealth < 200) wealthDesc = "你完美貫徹了「錢沒有不見，只是變成喜歡的樣子」的人生哲學。你一輩子都在為了房租與生活費奔波，存摺數字長年維持在三位數。雖然沒有大富大貴，但你至少在每個週末都吃到了美味的炸雞。";
+       else if (playerStats.wealth < 700) wealthDesc = "憑藉著扎實的工作與精準的記帳，你成功擠進了中產階級的行列。你買下了一棟屬於自己的溫馨公寓，有一台能遮風避雨的小車。離世前，你留給下一代一筆雖然不多、但足夠遮風避雨的安穩儲蓄。";
+       else wealthDesc = "你的名字成了財富的代名詞！無論是身為霸總、巨商還是頂級客戶，你的鈔能力已經超越了常人的想像。你名下擁有數不清的跨國房產、私人遊艇。你離世時所觸發的遺產稅，甚至直接讓當地稅務局全體員工拿到了當季的最高績效獎金。";
+
+       let partnerDesc = "";
+       const p = playerStats.partner;
+       if (p === "莉莉安") partnerDesc = "你與莉莉安打打鬧鬧走過了一輩子。直到晚年，她戴著老花眼鏡幫你整理藥丸時，依然會傲嬌地哼一聲說：「真是的，沒我照顧你該怎麼辦？」但她眼裡那一抹藏不住的溫柔，成了你這輩子最安心的歸宿。";
+       else if (p === "萊利") partnerDesc = "你與萊利從校園的格子傘走到白髮蒼蒼。他那大剌剌的笑聲拯救了你無數次的中年危機。晚年你們依然會坐在客廳為了打遊戲甩尾誰比較厲害而爭吵，你深深明白，只要有他在，你的青春就從未熄滅。";
+       else if (p === "艾斯") partnerDesc = "你與艾斯的婚姻生活充滿了活力與汗水。他那顆永遠長不大的赤子之心，讓你們的家庭日長年維持著恐怖的運動量。離世前看著他抓著頭傻笑、露出那顆熟悉的虎牙，你覺得這輩子過得無比溫暖。";
+       else if (p === "卡加莎") partnerDesc = "你與卡加莎過了一段讓整條街的惡鄰居都聞風喪膽的傳奇婚姻。這位當年的太妹女王，把她一輩子僅存的溫柔全留給了你。在最終的彌留之際，她緊緊握著你的手，眼眶微紅地塞給你一根可樂口味的棒棒糖，低聲說：「這輩子，老娘護得超痛快。」";
+       else if (p === "布雷克") partnerDesc = "你與布雷克組成了一個極度理性且高產出的菁英家庭。你們長年因為搶冷氣遙控器或家庭Excel帳單而智商博弈。但在每個疲憊的深夜，他默默為你倒的那杯溫水、以及那張傲嬌塞給你的特休單，都證明了他用最實用的方式，深深愛了你一輩子。";
+       else if (p === "伊安娜") partnerDesc = "你與伊安娜的婚姻是人間最美好的避風港。她無微不至的體貼、深夜那碗熬了六個小時的愛心雞湯，治癒了你一生所有的職場壓力。在生命的最後，她靠在你的肩膀上，輕聲問你下輩子還要不要繼續跟這位專屬伴侶續約，你微笑著閉上了眼睛。";
+       else if (p === "菲利克斯") partnerDesc = "你與菲利克斯上演了一場讓全球媒體瘋狂連載的豪門史詩。你成功用靈魂教育了這位有錢任性的霸道總裁，成為了他名下龐大帝國唯一的「最高主宰者」。你們買下了整座海島隱居，攜手看遍了世界的繁華與盡頭。";
+       else if (p === "奧妮") partnerDesc = "你與奧妮的婚姻充滿了驚心動魄的跨國法式浪漫。你們在羅浮宮開晚宴、在古堡捉迷藏、甚至開私人遊艇衝出北大西洋風暴。她用一生向你證明了，金錢雖然買得到一切，但唯獨買不到遇見你時，她那顆真正被救贖的流浪靈魂。";
+       else if (p === "相親對象") partnerDesc = "你與相親認識的老實伴侶牽手走過了半個世紀。對方一輩子都沒對你說過浪漫的甜言蜜語，卻總是默默打理好一切，為你打造了最踏實安穩的家。當你晚年握著對方那雙因為付出而長滿薄繭的手時，你流下了感動的眼淚，感謝這個世界把最極致的溫柔賜予了你。";
+       else partnerDesc = "你憑實力單身到了 80 歲，孤高地走完了天煞孤星的一生。但在生命的最後，你體內的遠古魔法代碼瘋狂覺醒，你當場轉職成了終極大魔法師，揮揮手就能顛覆創世宇宙！你站在高空看著地面上那些為了房貸和電費爭吵的情侶，不屑地大笑：「戀愛哪有魔法好玩！自由無價！」";
+
+       document.getElementById('d-title').innerText = "🌅 最終結算：你的一生傳奇！";
+       let childBlock = childText ? `<div style="background: #f0fdfa; padding: 15px; border-radius: 10px; border-left: 4px solid #10b981; margin: 15px 0;"><b>👶 後代傳承：</b>${childText.replace('<br>', '')}</div>` : "";
+       let html = `<div style="max-height: 400px; overflow-y: auto; padding-right: 10px; line-height: 1.8; font-size: 1.15rem; color: #334155;">
+           <p>時光飛逝，你來到了人生的後半場。身為一名<span style="color:#0f172a; font-weight:bold;">【${playerStats.profession}】</span>，你的一生充滿了各種選擇與挑戰。</p>
+           <p>${wealthDesc} ${partnerDesc} ${healthDesc}</p>
+           ${childBlock}
+           <div style="text-align: center; margin-top: 25px; padding-top: 15px; border-top: 2px dashed #94a3b8;">
+               <span style="color:#e11d48; font-weight:bold; font-size: 1.5rem;">【退休稱號：${retireTitle}】</span>${bondsText.replace('<br><br>', '<br>')}<br><br>
+               <span style="font-weight:bold; color:#0ea5e9;">💖 健康: ${playerStats.health} &nbsp;|&nbsp; 💰 財富: ${playerStats.wealth} &nbsp;|&nbsp; 💡 智慧: ${playerStats.wisdom}<br>✨ 魅力: ${playerStats.charm} &nbsp;|&nbsp; ⚔️ 勇氣: ${playerStats.courage}</span><br><br>
+               感謝遊玩《人生模擬器》！
+           </div>
+       </div>`;
+       
+       if (childStats) {
+           html += `<button class="job-btn" id="btn-inherit">👶 繼承孩子屬性並開始二周目</button>`;
+           html += `<button class="job-btn" id="btn-restart">🔄 放棄一切，重新轉生</button>`;
+           document.getElementById('d-content').innerHTML = html;
+           btnAction.style.display = "none";
+           
+           document.getElementById('btn-inherit').onclick = () => {
+               childStats.bonds = []; childStats.profession = ""; childStats.partner = ""; childStats.childPersonality = "";
+               localStorage.setItem('playerAttributes', JSON.stringify(childStats));
+               window.location.href = "game.html"; // 跳過臉部掃描，直接以孩子的身分開始童年
+           };
+           document.getElementById('btn-restart').onclick = () => {
+               localStorage.removeItem('playerAttributes');
+               window.location.href = "index.html";
+           };
+       } else {
+           document.getElementById('d-content').innerHTML = html;
+           btnAction.style.display = "block"; btnAction.innerText = "🔄 重新轉生";
+           btnAction.onclick = () => {
+               localStorage.removeItem('playerAttributes'); // 轉生時清除前一世的記憶
+               window.location.href = "index.html";
+           };
+       }
+    }
+
+    function startChallenge() {
+      btnAction.disabled = true;
+      eventState = {};
+      currentActiveBranches.forEach(b => { eventState[b.name] = { t: 0, bF: null, done: false }; });
+      timeRemaining = activeEvent.time;
+      document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+      isPlayingEvent = true;
+      eventTimer = setInterval(() => {
+          timeRemaining--;
+          document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+          if (timeRemaining <= 0) onTimeout();
+      }, 1000);
+    }
+
+    function gameLoop() {
+      requestAnimationFrame(gameLoop);
+      ctx.clearRect(0,0,640,480);
+      drawCameraOverlay();
+
+      if (isPlayingEvent) {
+         for (let branch of currentActiveBranches) {
+             let st = eventState[branch.name];
+             if (!st.done && branch.condFn) {
+                 let isDoingAction = branch.condFn(st, latestHands, latestFace || {}, latestRawFace, latestHandVel);
+                 if (isDoingAction) { st.t++; } else { st.t = Math.max(0, st.t - 0.5); } // 增加容錯機制，不要瞬間歸零
+                 
+                 if (st.t >= branch.ticksReq) {
+                     st.done = true;
+                     finishEvent(branch.success); return;
+                 }
+             }
+         }
+      }
+    }
+
+    function drawCameraOverlay() {
+      ctx.save();
+      ctx.translate(640, 0);
+      ctx.scale(-1, 1);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(15, 15, 220, 75);
+      ctx.font = "18px sans-serif";
+      ctx.fillStyle = "#fef08a";
+      
+      let faceStatus = "😐 平靜";
+      if(latestFace) {
+         if(latestFace.isSmile) faceStatus = "😁 微笑";
+         else if(latestFace.isFrown) faceStatus = "😠 皺眉";
+         if(latestFace.eyesClosed) faceStatus += " 😑 閉眼";
+         if(latestFace.mouthOpen) faceStatus += " 😬 張嘴";
+      } else { faceStatus = "未偵測"; }
+      ctx.fillText(`臉部: ${faceStatus}`, 25, 42);
+      
+      let hStates = latestHands.length > 0 ? latestHands.map(h => {
+          if (latestHandVel > 0.02) return '✋ 揮動';
+          let s = getHandState(h);
+          return s==='FIST' ? '✊ 握拳' : s==='PALM' ? '🖐️ 張開' : s==='V' ? '✌️ 剪刀' : s==='POINT' ? '☝️ 指' : '🖐️ 其他';
+      }).join(', ') : '未偵測';
+      ctx.fillText(`手勢: ${hStates}`, 25, 72);
+      ctx.restore();
+    }
+
+    function onTimeout() {
+      isPlayingEvent = false; clearInterval(eventTimer); 
+      finishEvent(activeEvent.fail || {msg: "時間到，什麼都沒發生。", effects: {}});
+    }
+
+    function finishEvent(result) {
+      isPlayingEvent = false; clearInterval(eventTimer);
+      let effectsText = "";
+      if (result.effects) {
+        for(let k in result.effects) {
+           playerStats[k] += result.effects[k];
+           const nameMap = {health: "健康", wealth: "財富", wisdom: "智慧", charm: "魅力", courage: "勇氣"};
+           effectsText += ` 【${nameMap[k]} ${result.effects[k] > 0 ? '+'+result.effects[k] : result.effects[k]}】`;
+        }
+      }
+      
+      if (result.bonds && !playerStats.bonds.includes(result.bonds)) {
+         playerStats.bonds.push(result.bonds);
+         effectsText += `<br>💞 解鎖羈絆：<span style="color:#ec4899; font-weight:bold;">${result.bonds}</span>`;
+      }
+      
+      localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+      updateStatsUI();
+      
+      document.getElementById('d-content').innerHTML = `<b>結果：</b><br>${result.msg}<br><span style="color:#0ea5e9;">${effectsText}</span>`;
+      document.getElementById('d-title').innerText = "事件結束";
+      btnAction.innerText = "進入下一階段";
+      btnAction.disabled = false;
+      btnAction.onclick = () => {
+         currentEventIndex++;
+         startNextEvent();
+      };
+    }
+  </script>
+</body>
+</html>

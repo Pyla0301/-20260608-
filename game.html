@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人生模擬器 - 童年家庭</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body { margin: 0; font-family: 'M PLUS Rounded 1c', '微軟正黑體', sans-serif; background-color: #fef08a; background-image: radial-gradient(#fde047 20%, transparent 20%), radial-gradient(#fde047 20%, transparent 20%); background-size: 40px 40px; background-position: 0 0, 20px 20px; min-height: 100vh; display: flex; flex-direction: column; }
+    
+    /* 頂部狀態列 */
+    .top-bar { display: flex; justify-content: space-around; background: rgba(245, 158, 11, 0.8); color: #fff; padding: 15px; font-size: 1.2rem; text-shadow: 1px 1px 2px #b45309; box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3); z-index: 10;}
+    .stat { display: flex; align-items: center; gap: 8px; }
+    .stat-val { font-weight: bold; color: #fde047; }
+
+    /* 遊戲主畫面 */
+    .game-container { display: flex; flex-wrap: wrap; max-width: 1100px; margin: 30px auto; background: rgba(255, 255, 255, 0.95); border-radius: 30px; overflow: hidden; box-shadow: 0 15px 40px rgba(245, 158, 11, 0.2); border: 5px dashed #fbbf24; }
+    
+    /* 左側攝影機區 */
+    .camera-view { position: relative; width: 640px; height: 480px; background: #000; flex-shrink: 0; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #overlay-canvas { z-index: 5; } /* 用來畫進度條或目標點 */
+    
+    /* 右側對話與事件區 */
+    .dialogue-box { padding: 30px; flex-grow: 1; flex-basis: 350px; display: flex; flex-direction: column; }
+    h2 { color: #d97706; margin-top: 0; font-size: 1.6rem; border-bottom: 3px dotted #fcd34d; padding-bottom: 10px;}
+    p.desc { font-size: 1.15rem; line-height: 1.6; color: #333; margin-bottom: 20px;}
+    .task-list { background: #f3f4f6; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; }
+    .task-list ul { margin: 0; padding-left: 20px; line-height: 1.5; color: #4b5563;}
+    .task-list li { margin-bottom: 10px; }
+    .branch-name { color: #f59e0b; font-weight: bold; }
+    
+    #d-timer { color: #e11d48; font-weight: bold; font-size: 1.3rem; text-align: center; margin-bottom: 15px; height: 30px;}
+    
+    .btn { margin-top: auto; padding: 15px; font-size: 1.3rem; font-family: inherit; font-weight: bold; background: linear-gradient(120deg, #f59e0b, #fbbf24); color: white; border: none; border-radius: 25px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; text-align: center; text-shadow: 1px 1px 2px #d97706; }
+    .btn:hover { transform: scale(1.02); box-shadow: 0 5px 15px rgba(245, 158, 11, 0.4); }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* 載入遮罩 */
+    #loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: white; display: flex; justify-content: center; align-items: center; font-size: 1.5rem; z-index: 100; transition: opacity 0.5s; }
+  </style>
+</head>
+<body>
+
+  <div id="loading-screen">正在啟動 MediaPipe 視覺引擎與載入童年記憶...</div>
+
+  <div class="top-bar">
+    <div class="stat">💖 健康: <span id="s-health" class="stat-val">100</span></div>
+    <div class="stat">💰 財富: <span id="s-wealth" class="stat-val">50</span></div>
+    <div class="stat">💡 智慧: <span id="s-wisdom" class="stat-val">50</span></div>
+    <div class="stat">✨ 魅力: <span id="s-charm" class="stat-val">50</span></div>
+    <div class="stat">⚔️ 勇氣: <span id="s-courage" class="stat-val">50</span></div>
+  </div>
+
+  <div class="game-container">
+    <div class="camera-view">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay-canvas" width="640" height="480"></canvas>
+    </div>
+    <div class="dialogue-box">
+      <h2 id="d-title">載入中...</h2>
+      <p id="d-desc" class="desc">請稍候。</p>
+      <div id="d-tasks" class="task-list" style="display:none;"></div>
+      <div id="d-timer"></div>
+      <button id="btn-action" class="btn" disabled>請等待相機啟動</button>
+    </div>
+  </div>
+
+  <script>
+    // --- 玩家狀態與遊戲流程變數 ---
+    let playerStats = { health: 100, wealth: 50, wisdom: 50, charm: 50, courage: 50 };
+    let selectedEvents = [];
+    let currentEventIndex = 0;
+    
+    // 進行中事件的狀態
+    let activeEvent = null;
+    let activeBranches = [];
+    let eventState = {}; 
+    let isPlayingEvent = false;
+    let timeRemaining = 0;
+    let eventTimer = null;
+
+    // AI 辨識狀態快取
+    let latestFace = null;
+    let latestRawFace = null;
+    let latestHands = [];
+    let prevHands = [];
+    let latestHandVel = 0;
+
+    const cvs = document.getElementById('overlay-canvas');
+    const ctx = cvs.getContext('2d');
+    const btnAction = document.getElementById('btn-action');
+
+    // 讀取初始屬性
+    const savedStats = localStorage.getItem('playerAttributes');
+    if (savedStats) {
+      const parsed = JSON.parse(savedStats);
+      for(let k in playerStats) if(parsed[k] !== undefined) playerStats[k] = parsed[k];
+      updateStatsUI();
+    }
+
+    function updateStatsUI() {
+      document.getElementById('s-health').innerText = playerStats.health;
+      document.getElementById('s-wealth').innerText = playerStats.wealth;
+      document.getElementById('s-wisdom').innerText = playerStats.wisdom;
+      document.getElementById('s-charm').innerText = playerStats.charm;
+      document.getElementById('s-courage').innerText = playerStats.courage;
+    }
+
+    // --- AI 分析輔助函數 ---
+    function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+    
+    function getHandState(lm) {
+      if (!lm) return "OTHER";
+      // 利用指尖到手腕距離 vs 指根(MCP)到手腕距離，判斷手指是否伸直 (極度精準)
+      const isExtended = (tip, mcp) => dist(lm[tip], lm[0]) > dist(lm[mcp], lm[0]);
+      const index = isExtended(8, 5), middle = isExtended(12, 9), ring = isExtended(16, 13), pinky = isExtended(20, 17);
+      
+      if (index && middle && ring && pinky) return "PALM";
+      if (!index && !middle && !ring && !pinky) return "FIST";
+      if (!index && !middle) return "FIST"; // 放寬：只要食指與中指彎曲，就算部分握拳
+      if (index && middle && !pinky) return "V"; // 放寬：小指彎曲就當作 V
+      if (index && !middle && !ring && !pinky) return "POINT";
+      return "OTHER";
+    }
+
+    // --- 8 個童年事件定義 ---
+    const EVENTS = [
+      {
+        id: 1, title: "【客廳的打破花瓶危機】",
+        desc: "你不小心把媽媽最心愛的古董花瓶砸得粉碎！媽媽一推開門看著滿地碎片：「這是誰做的？」",
+        time: 5, isImmediate: true,
+        getBranches: (s) => {
+          let b = [];
+          if (s.charm >= 0) b.push({ name: "魅力分支", task: "立刻對著鏡頭「雙手合十」並露出「無辜的微笑」",
+            check: (h, f) => h.length >= 1 && h.every(hand => hand[0].y > 0.4) && f.isSmile, // 確保手沒有高舉，避免跟勇氣分支衝突
+            success: { msg: "媽媽看你態度誠懇又可愛，嘆氣說：「人沒受傷就好。」", effects: {charm: 10} } });
+          if (s.courage >= 0) b.push({ name: "勇氣分支", task: "對著鏡頭「高舉單手」，臉部保持「嚴肅(不笑)」",
+            check: (h, f) => h.some(hand => hand[0].y < 0.4) && !f.isSmile, // 稍微放寬舉手高度，但必須保持嚴肅
+            success: { msg: "媽媽覺得你很有擔當，但還是罰你站並扣零用錢。", effects: {courage: 20, wealth: -10} } });
+          return b;
+        },
+        fail: { msg: "你嚇到呆住，被媽媽一眼看穿，迎來竹子炒肉絲。", effects: {health: -15} }
+      },
+      {
+        id: 2, title: "【餐桌上的青椒大魔王】",
+        desc: "爸爸端出了一盤炒青椒，嚴肅地說：「不准挑食，全部吃掉！」",
+        time: 5, isImmediate: true,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom >= 0) b.push({ name: "智慧分支", task: "把手一揮 (在鏡頭前快速揮手將青椒撥走)",
+            check: (h, f, rawFace, handVel) => h.length > 0 && (handVel > 0.015 || h.some(hand => getHandState(hand) === 'PALM')), // 更寬鬆：只要有手部移動或張開手掌即可
+            success: { msg: "瞞天過海！你偷偷把青椒撥給桌底下的狗狗，爸爸還稱讚你吃得乾淨。", effects: {wisdom: 15} } });
+          if (s.courage >= 0) b.push({ name: "勇氣分支", task: "用力閉眼或皺眉 + 露出牙齒 (痛苦吞嚥)",
+            check: (h, f) => (f.eyesClosed || f.isFrown) && f.mouthOpen, // 放寬：痛苦的吞嚥通常伴隨皺眉，兩者擇一加上張嘴即可
+            success: { msg: "你硬著頭皮把青椒吞下肚，克服了恐懼！", effects: {courage: 15, health: 5} } });
+          return b;
+        },
+        fail: { msg: "你死活不吃，被訓斥了一頓後含淚吞下。", effects: {health: -5} }
+      },
+      {
+        id: 3, title: "【搶奪遙控器大戰】",
+        desc: "你想看卡通，但哥哥/姊姊突然奪走遙控器！快搶回來！",
+        time: 5, isImmediate: false,
+        getBranches: () => [{ name: "體感分支", task: "隨機出現「遙控器」目標，伸出「張開的手掌」觸碰它！(需抓到 3 次)",
+          setup: (state) => { state.hits = 0; spawnDot(state); },
+          update: (state, h) => {
+            if(h.some(hand => state.target && dist(hand[9], state.target) < 0.25)) { // 放寬：移除時間重置，移除要求張開手掌，只要手碰到就算
+              state.hits++; spawnDot(state);
+            }
+          },
+          draw: (state, ctx, dim) => {
+            if (!state.target) spawnDot(state);
+            if(state.target) {
+              const cx = state.target.x * dim.w;
+              const cy = state.target.y * dim.h;
+              ctx.fillStyle = "rgba(253, 186, 116, 0.9)"; ctx.beginPath();
+              ctx.arc(cx, cy, 45, 0, Math.PI*2); ctx.fill();
+              ctx.save();
+              ctx.translate(cx, cy); ctx.scale(-1, 1); // 反轉文字以抵銷畫布的鏡像
+              ctx.fillStyle = "#000"; ctx.font = "20px sans-serif";
+              ctx.fillText(`抓取! (${state.hits}/3)`, -40, 5);
+              ctx.restore();
+            }
+          },
+          checkEnd: (state) => state.hits >= 3,
+          success: { msg: "你以迅雷不及掩耳的手速搶回遙控器，順利看到卡通！", effects: {charm: 10} },
+          fail: { msg: "速度太慢，遙控器被無情奪走，你只能生悶氣。", effects: {courage: -5} }
+        }],
+        fail: null // 由 checkEnd 處理
+      },
+      {
+        id: 4, title: "【週六早晨的家事大作戰】",
+        desc: "媽媽拿著抹布衝進房間：「別睡了！快起來擦桌子！」",
+        time: 5, isImmediate: false,
+        getBranches: () => [{ name: "體感分支", task: "對著鏡頭「左右揮手(擦桌子)」，累積 8 次位移！",
+          setup: (state) => { state.swipes = 0; state.lastX = null; state.dir = null; },
+          update: (state, h) => {
+            if(h.length > 0) {
+              let x = h[0][9].x;
+              if(state.lastX !== null) {
+                let dx = x - state.lastX;
+                if(Math.abs(dx) > 0.02) { // 大幅放寬擦拭動作的判定
+                  let curDir = dx > 0 ? 1 : -1;
+                  if(state.dir !== curDir) { state.swipes++; state.dir = curDir; }
+                  state.lastX = x; 
+                }
+              } else { state.lastX = x; }
+            }
+          },
+          draw: (state, ctx, dim) => {
+            ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fillRect(dim.w/2 - 150, 20, 300, 30);
+            ctx.fillStyle = "rgba(139, 92, 246, 0.8)"; ctx.fillRect(dim.w/2 - 150, 20, 300 * Math.min(1, state.swipes/8), 30);
+            ctx.save();
+            ctx.translate(dim.w/2, 42); ctx.scale(-1, 1);
+            ctx.fillStyle = "#fff"; ctx.font = "bold 18px sans-serif";
+            ctx.fillText(`擦拭進度: ${state.swipes} / 8`, -60, 0);
+            ctx.restore();
+          },
+          checkEnd: (state) => state.swipes >= 8,
+          success: { msg: "房間變得一塵不染。媽媽露出了欣慰的笑容，塞給你 100 元！", effects: {wealth: 20, charm: 10} },
+          fail: { msg: "你只是做做樣子，被媽媽抓包念了一整天。", effects: {courage: -5} }
+        }]
+      },
+      {
+        id: 5, title: "【深夜的廚房偷吃特攻隊】",
+        desc: "半夜你溜進廚房想偷吃草莓蛋糕，客廳卻突然傳來爸爸起夜的腳步聲……",
+        time: 3, isImmediate: false,
+        getBranches: (s) => {
+          if (s.wisdom > 55) return [{ name: "智慧檢定", task: "木頭人挑戰！保持「完全靜止，連眼睛都不能眨」撐過計時",
+            successOnTimeout: true,
+            setup: (state) => { state.moved = false; state.baseFace = null; },
+            update: (state, h, f, rawFace) => {
+              if(!rawFace) return;
+              if(!state.baseFace) state.baseFace = {x: rawFace[1].x, y: rawFace[1].y};
+              if(dist(rawFace[1], state.baseFace) > 0.03 || f.eyesClosed) state.moved = true;
+            },
+            checkEnd: (state) => state.moved ? 'fail' : false,
+            success: { msg: "爸爸揉揉眼睛走過去了，沒發現你。你成功吃掉蛋糕！", effects: {wisdom: 10, health: 10} },
+            fail: { msg: "你動了一下發出聲音，被爸爸抓個正著！", effects: {courage: 5, health: -5} }
+          }];
+          else return [{ name: "莽撞分支", task: "限時 1.5 秒內「張開手掌(5)」抓了就跑！",
+            setup: (state) => { state.caught = false; },
+            update: (state, h) => { if(3 - timeRemaining <= 1.5 && h.some(hand => getHandState(hand) === 'PALM')) state.caught = true; },
+            checkEnd: (state) => state.caught,
+            success: { msg: "拿到蛋糕！但逃跑時撞到椅子發出巨響，被當場捕獲。", effects: {courage: 5, health: -5} },
+            fail: { msg: "你手忙腳亂什麼都沒拿到，還被爸爸發現。", effects: {health: -10} }
+          }];
+        }
+      },
+      {
+        id: 6, title: "【超商的「買玩具」終極對決】",
+        desc: "在超商看到最新款跑車，你大喊要買，媽媽皺眉拒絕。這時你準備使出大絕招……",
+        time: 5, isImmediate: true,
+        getBranches: (s) => {
+          let b = [];
+          if(s.charm >= 0) b.push({ name: "魅力分支", task: "手靠近臉頰/下巴 + 燦爛微笑",
+            check: (h, f, rawFace) => {
+              if(!rawFace || h.length < 1) return false;
+              let handNearCheek = h.some(hand => dist(hand[9], rawFace[152]) < 0.8 || dist(hand[9], rawFace[234]) < 0.8 || dist(hand[9], rawFace[454]) < 0.8);
+              return handNearCheek && f.isSmile; // 放寬：只要有一隻手靠近任一側臉頰，且有微笑即可
+            },
+            success: { msg: "媽媽的心瞬間被你融化：「真是拿你沒辦法，最後一次喔！」", effects: {charm: 15, wealth: 5} } });
+          if(s.courage >= 0) b.push({ name: "勇氣分支", task: "雙手在鏡頭前一陣快速亂揮(模擬打滾)",
+            check: (h, f, rF, handVel) => h.length > 0 && (handVel > 0.015 || h.some(hand => getHandState(hand) === 'PALM' || getHandState(hand) === 'V')), // 更寬鬆的晃動判定，增加偵測成功機率
+            success: { msg: "你引起全店注意。媽媽覺得太丟臉，把你抱起來抓出超商。", effects: {courage: 20, charm: -10} } });
+          return b;
+        },
+        fail: { msg: "你只是呆呆站著，媽媽拉著你的手直接結帳回家。", effects: {courage: -5} }
+      },
+      {
+        id: 7, title: "【沙坑城堡爭奪戰】",
+        desc: "大胖一腳把你的沙坑城堡踩扁，還搶走你的小鏟子！",
+        time: 5, isImmediate: true,
+        getBranches: (s) => {
+          let b = [];
+          if(s.courage >= 0) b.push({ name: "勇氣分支", task: "單手或雙手握拳 + 稍微皺眉",
+            check: (h, f) => h.length >= 1 && h.some(hand => getHandState(hand) === 'FIST') && f.isFrown, // 放寬：單手握拳即可
+            success: { msg: "大胖被你的驚人氣勢嚇哭，丟下鏟子逃跑了！", effects: {courage: 15} } });
+          if(s.charm >= 0) b.push({ name: "魅力分支", task: "假裝大哭 (手遮眼睛/臉部 + 露出牙齒/張嘴)",
+            check: (h, f, rawFace) => {
+              if(!rawFace || h.length < 1) return false;
+              let handNearEye = h.some(hand => dist(hand[9], rawFace[159]) < 1.0 || dist(hand[9], rawFace[386]) < 1.0);
+              return handNearEye && f.mouthOpen; // 放寬：距離判定加大
+            },
+            success: { msg: "大胖媽媽立刻跑過來訓了他一頓，把鏟子還你還給你糖果！", effects: {charm: 10, health: 5} } });
+          return b;
+        },
+        fail: { msg: "你默默地看著他，大胖拿著你的鏟子得意地走了。你學到了社會的殘酷。", effects: {wisdom: 5} }
+      },
+      {
+        id: 8, title: "【童言童語的「告狀」現場】",
+        desc: "爸爸把遙控器坐斷了，塞給你餅乾當封口費。這時媽媽走進來問：「你們剛剛在搞什麼鬼？」",
+        time: 5, isImmediate: true,
+        getBranches: (s) => {
+          let b = [];
+          if(s.charm >= 0) b.push({ name: "魅力分支", task: "食指放在嘴唇上(噓) + 無辜微笑",
+            check: (h, f, rawFace) => h.length > 0 && getHandState(h[0])==='POINT' && dist(h[0][8], rawFace[13]) < 0.3 && f.isSmile,
+            success: { msg: "媽媽沒懷疑，爸爸私下又給了你一塊巧克力。", effects: {charm: 10, wealth: 10} } });
+          if(s.courage >= 0) b.push({ name: "勇氣分支", task: "單手食指指向前方(指認)",
+            check: (h, f, rawFace) => h.length > 0 && getHandState(h[0])==='POINT' && (!rawFace || dist(h[0][8], rawFace[13]) > 0.2),
+            success: { msg: "你大喊：「爸爸坐壞的！」你得到媽媽讚賞，但爸爸眼神幽怨。", effects: {courage: 20} } });
+          return b;
+        },
+        fail: { msg: "你支支吾吾說不出話，媽媽發現了壞掉的遙控器，把你們兩個都罵了一頓。", effects: {health: -5} }
+      }
+    ];
+
+    function spawnDot(state) {
+      let pos = [{x: 0.2, y: 0.5}, {x: 0.5, y: 0.5}, {x: 0.8, y: 0.5}];
+      // 如果畫面上已經有遙控器，就將它現在的位置從選單中剔除，避免連續生在同一個地方
+      if (state.target) {
+        pos = pos.filter(p => p.x !== state.target.x || p.y !== state.target.y);
+      }
+      state.target = pos[Math.floor(Math.random() * pos.length)];
+      state.spawnTime = Date.now();
+    }
+
+    // 初始化遊戲事件池
+    selectedEvents = [...EVENTS].sort(() => 0.5 - Math.random()).slice(0, 3);
+
+    // --- MediaPipe 引擎啟動 ---
+    const videoElement = document.getElementById('video');
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults((res) => {
+      if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+        latestRawFace = res.multiFaceLandmarks[0];
+        let faceW = dist(latestRawFace[234], latestRawFace[454]) || 1; // 除以臉寬以消除距離影響
+        let faceH = dist(latestRawFace[10], latestRawFace[152]) || 1;  // 臉部整體高度 (額頭到下巴)
+        let mouthDist = dist(latestRawFace[13], latestRawFace[14]);    // 上下嘴唇內側距離
+        let mouthRatio = mouthDist / faceH;
+        latestFace = {
+          isSmile: (dist(latestRawFace[61], latestRawFace[291]) / faceW) > 0.30, // 放寬微笑判定
+          isFrown: (dist(latestRawFace[107], latestRawFace[336]) / faceW) < 0.26, // 終極放寬皺眉判定：稍微皺一下眉頭就過關
+          mouthOpen: mouthRatio > 0.015, // 只要上下嘴唇微張（露出牙齒）就過關
+          eyesClosed: (dist(latestRawFace[159], latestRawFace[145]) / faceH) < 0.035 && (dist(latestRawFace[386], latestRawFace[374]) / faceH) < 0.035
+        };
+      } 
+      // 注意：拿掉 else 區塊，這樣就算手遮住臉失去追蹤，AI 還是會保留遮擋前一刻的表情殘影！
+    });
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults((res) => {
+      if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        latestHands = res.multiHandLandmarks;
+        let vel = 0;
+        latestHands.forEach(hand => {
+          if (prevHands.length > 0) {
+            let minDist = Math.min(...prevHands.map(ph => dist(hand[9], ph[9]))); // 改用掌心/指根處計算速度，更靈敏
+            vel = Math.max(vel, minDist); // 移除 < 0.5 的限制，防止快速揮手時被誤判為雜訊而被丟棄
+          }
+        });
+        latestHandVel = vel;
+        prevHands = latestHands;
+      } else { latestHands = []; latestHandVel = 0; prevHands = []; }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        try {
+          await faceMesh.send({image: videoElement});
+          await hands.send({image: videoElement});
+        } catch (err) {}
+      }, width: 640, height: 480
+    });
+
+    camera.start().then(() => {
+      document.getElementById('loading-screen').style.opacity = '0';
+      setTimeout(() => document.getElementById('loading-screen').style.display = 'none', 500);
+      startNextEvent();
+      requestAnimationFrame(gameLoop);
+    });
+
+    // --- 遊戲主邏輯 ---
+    function startNextEvent() {
+      if (currentEventIndex >= selectedEvents.length) {
+         let title = "平凡小學生";
+         if (playerStats.charm > 80) title = "萬人迷小天使";
+         else if (playerStats.courage > 80) title = "調皮搗蛋王";
+         else if (playerStats.wisdom > 80) title = "機智小神童";
+         
+         document.getElementById('d-title').innerText = "🎈 童年階段結算！";
+         document.getElementById('d-desc').innerHTML = `時光飛逝，你成功度過了充滿驚奇的童年。<br><br>你的童年稱號是：<span style="color:#e11d48; font-size:1.5rem; font-weight:bold;">【${title}】</span><br><br>準備好邁入青春洋溢的學生時期了嗎？`;
+         document.getElementById('d-tasks').style.display = "none";
+         btnAction.innerText = "進入學生時期";
+         btnAction.onclick = () => window.location.href = "student.html";
+         return;
+      }
+      
+      activeEvent = selectedEvents[currentEventIndex];
+      document.getElementById('d-title').innerText = activeEvent.title;
+      document.getElementById('d-desc').innerText = activeEvent.desc;
+      
+      activeBranches = activeEvent.getBranches(playerStats);
+      
+      // 如果屬性未達到任何分支條件，給予預設發呆分支
+      if (activeBranches.length === 0) {
+        activeBranches.push({ 
+          name: "無動於衷", 
+          task: "屬性不足以做出反應，只能發呆... (請等待倒數結束)", 
+          check: () => false 
+        });
+      }
+
+      let taskHTML = "<ul>";
+      activeBranches.forEach(b => { taskHTML += `<li><span class="branch-name">[${b.name}]</span>: ${b.task}</li>`; });
+      taskHTML += "</ul>";
+      
+      document.getElementById('d-tasks').innerHTML = taskHTML;
+      document.getElementById('d-tasks').style.display = "block";
+      document.getElementById('d-timer').innerText = `限時: ${activeEvent.time} 秒`;
+      
+      btnAction.innerText = "準備挑戰";
+      btnAction.disabled = false;
+      btnAction.onclick = () => startChallenge();
+    }
+
+    function startChallenge() {
+      btnAction.disabled = true;
+      eventState = {};
+      activeBranches.forEach(b => { if (b.setup) b.setup(eventState); });
+      
+      timeRemaining = activeEvent.time;
+      document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+      document.getElementById('d-desc').innerText = "事件開始！請依照任務指示做出表情或動作，畫面上會顯示偵測狀態。";
+      isPlayingEvent = true;
+      
+      eventTimer = setInterval(() => {
+          timeRemaining--;
+          document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+          if (timeRemaining <= 0) onTimeout();
+      }, 1000);
+    }
+
+    function gameLoop() {
+      // 將迴圈排程移到最上方，保證不管底下判定是否提早 return，引擎永遠保持運轉！
+      requestAnimationFrame(gameLoop);
+
+      if (isPlayingEvent) {
+         ctx.clearRect(0,0,640,480);
+         drawDetectionOverlay();
+
+         if (activeEvent.isImmediate) {
+            const safeFace = latestFace || {};
+            const safeRawFace = latestRawFace || Array.from({length: 468}, () => ({x:0, y:0}));
+            for(let b of activeBranches) {
+               if (b.check(latestHands, safeFace, safeRawFace, latestHandVel)) {
+                   finishEvent(b.success); return;
+               }
+            }
+         } else {
+            for (let branch of activeBranches) {
+              if (branch.update) branch.update(eventState, latestHands, latestFace, latestRawFace, latestHandVel);
+              if (branch.draw) branch.draw(eventState, ctx, {w: 640, h: 480});
+              if (branch.checkEnd) { 
+                let res = branch.checkEnd(eventState);
+                if(res === true) { finishEvent(branch.success); return; }
+                if(res === 'fail') { finishEvent(branch.fail); return; }
+              }
+            }
+         }
+      }
+    }
+
+    function drawDetectionOverlay() {
+      ctx.save();
+      ctx.translate(640, 0);
+      ctx.scale(-1, 1);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(15, 15, 220, 115);
+      ctx.font = "18px sans-serif";
+      ctx.fillStyle = "#fef08a";
+
+      let faceStatus = "偵測中：請將臉部置中並露出表情";
+      if(latestFace) {
+         faceStatus = "😐 平靜";
+         if(latestFace.isSmile) faceStatus = "😁 微笑";
+         else if(latestFace.isFrown) faceStatus = "😠 皺眉";
+         if(latestFace.eyesClosed) faceStatus += " 😑 閉眼";
+         if(latestFace.mouthOpen) faceStatus += " 😬 露齒/張嘴";
+      } else if (latestHands.length > 0) {
+         faceStatus = "偵測到手部，等待臉部...";
+      }
+      ctx.fillText(`臉部: ${faceStatus}`, 25, 42);
+      if (activeEvent && isPlayingEvent) {
+         if (activeEvent.id === 2) {
+            ctx.fillText("提示: 青椒事件偵測中，請揮手或做痛苦表情", 25, 92);
+         } else if (activeEvent.id === 6) {
+            ctx.fillText("提示: 逛超商事件偵測中，請揮手或露出燦爛微笑", 25, 92);
+         }
+      }
+
+      let hStates = latestHands.length > 0 ? latestHands.map(h => {
+          if (latestHandVel > 0.015) return '✋ 揮動';
+          let s = getHandState(h);
+          return s==='FIST' ? '✊ 握拳' : s==='PALM' ? '🖐️ 張開' : s==='V' ? '✌️ 剪刀' : s==='POINT' ? '☝️ 指' : '🖐️ 其他';
+      }).join(', ') : '未偵測到手';
+      ctx.fillText(`手勢: ${hStates}`, 25, 72);
+      ctx.restore();
+    }
+
+    function onTimeout() {
+      isPlayingEvent = false; clearInterval(eventTimer); ctx.clearRect(0,0,640,480);
+      
+      let timeoutBranch = activeBranches.find(b => b.successOnTimeout || b.fail);
+      if (!activeEvent.isImmediate && timeoutBranch) {
+          if (timeoutBranch.successOnTimeout) finishEvent(timeoutBranch.success);
+          else if (timeoutBranch.fail) finishEvent(timeoutBranch.fail);
+          else finishEvent({msg: "時間到，什麼都沒發生。", effects: {}});
+      }
+      else if (activeEvent.fail) finishEvent(activeEvent.fail);
+      else finishEvent({msg: "時間到，什麼都沒發生。", effects: {}});
+    }
+
+    function finishEvent(result) {
+      isPlayingEvent = false; clearInterval(eventTimer); ctx.clearRect(0,0,640,480);
+      
+      let effectsText = "";
+      if (result.effects) {
+        for(let k in result.effects) {
+           playerStats[k] += result.effects[k];
+           const nameMap = {health: "健康", wealth: "財富", wisdom: "智慧", charm: "魅力", courage: "勇氣"};
+           effectsText += ` 【${nameMap[k]} ${result.effects[k] > 0 ? '+'+result.effects[k] : result.effects[k]}】`;
+        }
+        // 將最新屬性存回 localStorage，讓下一階段讀取
+        localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+        updateStatsUI();
+      }
+      
+      document.getElementById('d-desc').innerHTML = `<b>結果：</b><br>${result.msg}<br><span style="color:#d946ef;">${effectsText}</span>`;
+      document.getElementById('d-tasks').style.display = "none";
+      document.getElementById('d-timer').innerText = "";
+      
+      btnAction.innerText = "下一個記憶";
+      btnAction.disabled = false;
+      btnAction.onclick = () => {
+         currentEventIndex++;
+         startNextEvent();
+      };
+    }
+  </script>
+</body>
+</html>

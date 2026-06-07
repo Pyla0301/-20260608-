@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人生模擬器 - 學生時期</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body { margin: 0; font-family: 'M PLUS Rounded 1c', '微軟正黑體', sans-serif; background: repeating-linear-gradient(45deg, #e0f2fe, #e0f2fe 20px, #bae6fd 20px, #bae6fd 40px); min-height: 100vh; display: flex; flex-direction: column; }
+    
+    .top-bar { display: flex; justify-content: space-around; background: rgba(2, 132, 199, 0.8); color: #fff; padding: 15px; font-size: 1.2rem; text-shadow: 1px 1px 2px #0369a1; box-shadow: 0 4px 10px rgba(2, 132, 199, 0.3); z-index: 10;}
+    .stat { display: flex; align-items: center; gap: 8px; }
+    .stat-val { font-weight: bold; color: #fde047; }
+
+    .game-container { display: flex; flex-wrap: wrap; max-width: 1100px; margin: 30px auto; background: rgba(255, 255, 255, 0.95); border-radius: 20px; overflow: hidden; box-shadow: 0 15px 40px rgba(14, 165, 233, 0.3); border: 3px solid #7dd3fc; }
+    
+    .camera-view { position: relative; width: 640px; height: 480px; background: #000; flex-shrink: 0; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #overlay-canvas { z-index: 5; } 
+    
+    .dialogue-box { padding: 30px; flex-grow: 1; flex-basis: 350px; display: flex; flex-direction: column; }
+    h2 { color: #0284c7; margin-top: 0; font-size: 1.6rem; border-bottom: 2px dashed #7dd3fc; padding-bottom: 10px;}
+    p.desc { font-size: 1.15rem; line-height: 1.6; color: #333; margin-bottom: 20px;}
+    .task-list { background: #f0fdfa; padding: 15px 20px; border-radius: 10px; margin-bottom: 20px; }
+    .task-list ul { margin: 0; padding-left: 20px; line-height: 1.5; color: #4b5563;}
+    .task-list li { margin-bottom: 10px; }
+    .branch-name { color: #0ea5e9; font-weight: bold; }
+    
+    #d-timer { color: #e11d48; font-weight: bold; font-size: 1.3rem; text-align: center; margin-bottom: 15px; height: 30px;}
+    
+    .btn { margin-top: auto; padding: 15px; font-size: 1.3rem; font-family: inherit; font-weight: bold; background: linear-gradient(120deg, #38bdf8, #818cf8); color: white; border: none; border-radius: 15px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; text-align: center; }
+    .btn:hover { transform: scale(1.02); box-shadow: 0 5px 15px rgba(56, 189, 248, 0.4); }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    #loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; color: white; display: flex; justify-content: center; align-items: center; font-size: 1.5rem; z-index: 100; transition: opacity 0.5s; }
+  </style>
+</head>
+<body>
+
+  <div id="loading-screen">正在啟動 MediaPipe 視覺引擎與載入青春校園記憶...</div>
+
+  <div class="top-bar">
+    <div class="stat">💖 健康: <span id="s-health" class="stat-val">100</span></div>
+    <div class="stat">💰 財富: <span id="s-wealth" class="stat-val">50</span></div>
+    <div class="stat">💡 智慧: <span id="s-wisdom" class="stat-val">50</span></div>
+    <div class="stat">✨ 魅力: <span id="s-charm" class="stat-val">50</span></div>
+    <div class="stat">⚔️ 勇氣: <span id="s-courage" class="stat-val">50</span></div>
+  </div>
+
+  <div class="game-container">
+    <div class="camera-view">
+      <video id="video" autoplay playsinline></video>
+      <canvas id="overlay-canvas" width="640" height="480"></canvas>
+    </div>
+    <div class="dialogue-box">
+      <h2 id="d-title">載入中...</h2>
+      <p id="d-desc" class="desc">請稍候。</p>
+      <div id="d-tasks" class="task-list" style="display:none;"></div>
+      <div id="d-timer"></div>
+      <button id="btn-action" class="btn" disabled>請等待相機啟動</button>
+    </div>
+  </div>
+
+  <script>
+    let playerStats = { health: 100, wealth: 50, wisdom: 50, charm: 50, courage: 50, bonds: [] };
+    let selectedEvents = [];
+    let currentEventIndex = 0;
+    
+    let activeEvent = null;
+    let activeBranches = [];
+    let eventState = {}; 
+    let isPlayingEvent = false;
+    let timeRemaining = 0;
+    let eventTimer = null;
+
+    let latestFace = null;
+    let latestRawFace = null;
+    let latestHands = [];
+    let prevHands = [];
+    let latestHandVel = 0;
+
+    const cvs = document.getElementById('overlay-canvas');
+    const ctx = cvs.getContext('2d');
+    const btnAction = document.getElementById('btn-action');
+
+    const savedStats = localStorage.getItem('playerAttributes');
+    if (savedStats) {
+      const parsed = JSON.parse(savedStats);
+      for(let k in playerStats) if(parsed[k] !== undefined) playerStats[k] = parsed[k];
+      if (!playerStats.bonds) playerStats.bonds = []; // 確保羈絆陣列存在
+      updateStatsUI();
+    }
+
+    function updateStatsUI() {
+      document.getElementById('s-health').innerText = playerStats.health;
+      document.getElementById('s-wealth').innerText = playerStats.wealth;
+      document.getElementById('s-wisdom').innerText = playerStats.wisdom;
+      document.getElementById('s-charm').innerText = playerStats.charm;
+      document.getElementById('s-courage').innerText = playerStats.courage;
+    }
+
+    function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+    
+    function getHandState(lm) {
+      if (!lm) return "OTHER";
+      const isExtended = (tip, mcp) => dist(lm[tip], lm[0]) > dist(lm[mcp], lm[0]);
+      const index = isExtended(8, 5), middle = isExtended(12, 9), ring = isExtended(16, 13), pinky = isExtended(20, 17);
+      
+      if (index && middle && ring && pinky) return "PALM";
+      if (!index && !middle && !ring && !pinky) return "FIST";
+      if (!index && !middle) return "FIST"; 
+      if (index && middle && !pinky) return "V"; 
+      if (index && !middle && !ring && !pinky) return "POINT";
+      return "OTHER";
+    }
+
+    // --- 12 個學生時期事件定義 ---
+    const EVENTS = [
+      {
+        id: 1, title: "【課堂上的瞌睡蟲】",
+        desc: "下午第一節是超無聊的歷史課，台上的老師聲音像催眠曲。你的眼皮重得像有千斤重，快要睡著了！這時老師突然轉過身來...",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom > 70) {
+            b.push({ name: "智慧分支", task: "保持「面無表情（嚴肅）」 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => { if (!f.isSmile && !f.isFrown && !f.mouthOpen && !f.eyesClosed) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1); },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "實作「睜眼睡覺」大法成功！老師以為你在苦思歷史難題。", effects: {wisdom: 5} } });
+          } else {
+            b.push({ name: "智慧分支", task: "<span style='color:#9ca3af'>🔒 智慧不足 70，無法實作「睜眼睡覺」大法</span>", check: () => false });
+          }
+          if (s.charm > 70) {
+            b.push({ name: "魅力分支", task: "立刻對著鏡頭「燦爛微笑（裝傻）」",
+              update: (state, h, f) => { if (f.isSmile) state.done = true; },
+              checkEnd: (state) => state.done,
+              success: { msg: "老師被你萌到，轉頭去罵別人。", effects: {charm: 5} } });
+          } else {
+            b.push({ name: "魅力分支", task: "<span style='color:#9ca3af'>🔒 魅力不足 70，笑起來像在挑釁</span>", check: () => false });
+          }
+          b.push({ name: "勇氣分支", task: "在 2 秒內「高舉雙手（自願罰站）」",
+            setup: (state) => { state.startTime = Date.now(); state.fail = false; },
+            update: (state, h) => { 
+              let elapsed = (Date.now() - state.startTime) / 1000;
+              if (elapsed > 2 && !state.done) state.fail = true;
+              if (h.some(hand => hand[0].y < 0.3) && elapsed <= 2) state.done = true; 
+            },
+            checkEnd: (state) => state.fail ? 'fail' : (state.done ? true : false),
+            success: { msg: "教官進來看到覺得你很有擔當！", effects: {courage: 10, health: -5} },
+            fail: { msg: "你反應太慢，被老師用粉筆丟醒罰站！", effects: {health: -5} } 
+          });
+          return b;
+        },
+        fail: { msg: "你倒頭大睡，被老師用粉筆丟醒，罰站一節課。", effects: {health: -5, charm: -5} }
+      },
+      {
+        id: 2, title: "【巷口的大黃狗】",
+        desc: "放學路上，一隻體型像小牛一樣的流浪大黃狗突然從巷子口衝出來，對著你瘋狂哈氣！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.courage > 75) {
+            b.push({ name: "勇氣檢定", task: "「雙手張開(✋)」並且「憤怒皺眉」",
+              update: (state, h, f) => { 
+                if (h.length >= 2 && h.some(hand => getHandState(hand)==='PALM') && f.isFrown) state.done = true; 
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "大黃狗被你的氣勢嚇到，夾著尾巴逃跑了！", effects: {courage: 20} } });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 75，不敢直視大黃狗</span>", check: () => false });
+          }
+          if (s.wisdom > 60) {
+            b.push({ name: "智慧檢定", task: "完全「靜止不動」維持 3 秒",
+              setup: (state) => { state.ticks = 0; state.baseFace = null; },
+              update: (state, h, f, rawFace) => {
+                if (!rawFace) return;
+                if (!state.baseFace) state.baseFace = {x: rawFace[1].x, y: rawFace[1].y};
+                if (dist(rawFace[1], state.baseFace) > 0.03 || h.length > 0) { state.ticks = Math.max(0, state.ticks - 1); state.baseFace = null; } else { state.ticks++; }
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "大黃狗覺得你像一尊雕像很無趣，聞一聞就走了。", effects: {wisdom: 10} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 60，嚇到想轉身逃跑</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "大黃狗咬住你的書包，書本散落一地。", effects: {wealth: -10, health: -20} }
+      },
+      {
+        id: 3, title: "【福利社的最後一個麵包】",
+        desc: "下課鐘聲響起，你衝向福利社，發現架上只剩下最後一個限量「炸雞炒麵麵包」！與此同時，隔壁班的惡霸也伸出了手！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.courage > 70) {
+            b.push({ name: "勇氣檢定", task: "將單手伸到畫面上方，並「快速握拳(✊)」",
+              update: (state, h) => {
+                if (h.some(hand => hand[0].y < 0.4 && getHandState(hand) === 'FIST')) state.done = true;
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "你強行抓走麵包，惡霸被你的氣勢震懾！", effects: {courage: 15, health: 10} }
+            });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 70，不敢跟惡霸搶</span>", check: () => false });
+          }
+          if (s.wisdom > 65) {
+            b.push({ name: "智慧檢定", task: "先「比 YA (✌️)」，再快速把手移到畫面下方",
+              setup: (state) => { state.ya = false; },
+              update: (state, h) => {
+                if (h.length >= 1) {
+                   if (getHandState(h[0]) === 'V') state.ya = true;
+                   if (state.ya && h[0][0].y > 0.6) state.done = true;
+                }
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "利用假動作聲東擊西！惡霸抓了個空，你優雅地拿到麵包。", effects: {wisdom: 15} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 65，想不到聲東擊西的妙招</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "麵包被惡霸搶走，你還被推倒在地。", effects: {health: -15, charm: -5} }
+      },
+      {
+        id: 4, title: "【情書驚魂！導師的雷達眼】",
+        desc: "你正偷偷寫紙條傳給心儀對象。就在快傳出去的瞬間，班導師出現在窗外，凌厲的眼神直勾勾掃向你！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom > 75) {
+            b.push({ name: "智慧檢定", task: "「單手托腮（手靠近臉頰）」並且「閉上眼睛」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rawFace) => {
+                let handNearCheek = false;
+                if (rawFace && h.length > 0) {
+                  handNearCheek = h.some(hand => dist(hand[9], rawFace[152]) < 0.8 || dist(hand[9], rawFace[234]) < 0.8 || dist(hand[9], rawFace[454]) < 0.8);
+                }
+                if (handNearCheek && f.eyesClosed) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "老師以為你在苦思微積分，滿意地走開，紙條安全過關！", effects: {wisdom: 20} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 75，裝不出學霸的氣場</span>", check: () => false });
+          }
+          if (s.charm > 70) {
+            b.push({ name: "魅力檢定", task: "「雙手合十」並對著鏡頭展現「燦爛微笑」",
+              update: (state, h, f) => {
+                if (h.length >= 1 && f.isSmile) state.done = true; 
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "老師嘆口氣放你一馬，不忍心苛責你。", effects: {charm: 15} }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 70，笑容無法融化導師</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "動作太慢被老師當場抓包，紙條被沒收並在全班面前朗讀！", effects: {charm: -25} }
+      },
+      {
+        id: 5, title: "【班際躲避球大賽的終極一擊】",
+        desc: "最後一球，對方的主力投手號稱「外野重砲手」，將球以極快的速度往你的正面砸過來！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.courage > 80) {
+            b.push({ name: "勇氣檢定", task: "雙手在胸前張開(✋)，「頭部完全靜止不動」維持 2 秒",
+              setup: (state) => { state.ticks = 0; state.baseFace = null; },
+              update: (state, h, f, rawFace) => {
+                if (!rawFace) return;
+                if (!state.baseFace) state.baseFace = {x: rawFace[1].x, y: rawFace[1].y};
+                if (dist(rawFace[1], state.baseFace) > 0.05) { state.ticks = Math.max(0, state.ticks - 1); state.baseFace = null; }
+                else if (h.length >= 1 && h.some(hand => getHandState(hand) === 'PALM')) { state.ticks++; }
+              },
+              checkEnd: (state) => state.ticks >= 40,
+              success: { msg: "你漂亮接殺對手，全場瘋狂歡呼！", effects: {courage: 30, charm: 10} }
+            });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 80，不敢硬接重砲</span>", check: () => false });
+          }
+          if (s.wisdom > 60) {
+            b.push({ name: "智慧檢定", task: "頭部快速往左或往右偏 (位移超過畫布的 20%)",
+              setup: (state) => { state.baseFaceX = null; },
+              update: (state, h, f, rawFace) => {
+                if (!rawFace) return;
+                if (!state.baseFaceX) state.baseFaceX = rawFace[1].x;
+                if (Math.abs(rawFace[1].x - state.baseFaceX) > 0.2) state.done = true;
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "你流暢閃過球，精妙的走位讓全場驚呼！", effects: {wisdom: 15} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 60，來不及判斷球的軌跡</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "沒躲過也沒接住，球直接「砰」一聲砸在你的正臉上。", effects: {health: -25, charm: -10} }
+      },
+      {
+        id: 6, title: "【期末考前夜的死線危機】",
+        desc: "明天就是決定能否升級的期末考，你整學期都在打網咖。今晚你必須強行把公式記進腦袋裡！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom > 70) {
+            b.push({ name: "智慧檢定", task: "睜大眼睛、頭部靜止，死死盯著螢幕維持 3 秒！",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => { if (!f.eyesClosed) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1); },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "開啟「量子波動速讀」大法，強行背下所有內容，考試大獲全勝！", effects: {wisdom: 25} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 70，無法集中精神速讀</span>", check: () => false });
+          }
+          if (s.courage > 75) {
+            b.push({ name: "勇氣檢定", task: "對著鏡頭「閉上眼睛（冥想熟睡）」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => { if (f.eyesClosed) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1); },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "你決定早點睡，隔天神明保佑猜對大半！", effects: {courage: 20, health: 10} }
+            });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 75，怕被當掉不敢睡覺</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "看書看到一半開始打瞌睡分心，隔天滿紙紅字。", effects: {wisdom: -10} }
+      },
+      {
+        id: 7, title: "【校慶園遊會的黃金叫賣王】",
+        desc: "隔壁班大打折，你們班卻剩下一大堆材料。班長一臉絕望：「靠你拯救我們班的營業額了！」",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.charm > 80) {
+            b.push({ name: "魅力檢定", task: "「露齒微笑」並「閉眼/單眼Wink」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rF) => {
+                let wink = false;
+                if (rF) {
+                  let faceH = dist(rF[10], rF[152]) || 1;
+                  // 只要有一隻眼睛閉上(Wink)就算過關，避免微笑擠壓臉頰導致誤判
+                  wink = (dist(rF[159], rF[145]) / faceH) < 0.065 || (dist(rF[386], rF[374]) / faceH) < 0.065;
+                }
+                if (f.mouthOpen && f.isSmile && wink) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "學姐和學妹把攤位擠爆，瞬間完售！", effects: {wealth: 100, charm: 15} }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 80，無法靠臉蛋吸客</span>", check: () => false });
+          }
+          if (s.wisdom > 70) {
+            b.push({ name: "智慧檢定", task: "「單手比 1 (☝️ 指)」並保持嚴肅 2 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => {
+                if (h.some(hand => getHandState(hand) === 'POINT') && !f.isSmile) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 40,
+              success: { msg: "想出創新行銷手法！奇招大獲全勝，老師大讚你是商業奇才。", effects: {wisdom: 25} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 70，想不出什麼好點子</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "你害羞不敢叫賣，坐在攤位後面狂吃自己班的鬆餅。", effects: {wealth: -20, health: -5} }
+      },
+      {
+        id: 8, title: "【與傲嬌班長的「課後留校課輔」】",
+        desc: "放學後的夕陽照進無人的教室。因為你期中考數學太爛，班長奉命留下來單獨幫你補習。她用原子筆敲敲你的課本，臉頰微紅、轉過頭傲嬌地說：「真是的……這麼簡單的公式你也不會？聽好了，我只講一次，要是你敢分心不看著我，我就再也不管你了！」",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom > 75) {
+            b.push({ name: "智慧檢定", task: "睜大眼睛、頭部完全靜止、3 秒鐘內絕對不能眨眼",
+              setup: (state) => { state.ticks = 0; state.baseFace = null; },
+              update: (state, h, f, rawFace) => {
+                if (!rawFace) return;
+                if (!state.baseFace) state.baseFace = {x: rawFace[1].x, y: rawFace[1].y};
+                if (dist(rawFace[1], state.baseFace) > 0.04 || f.eyesClosed) { state.ticks = Math.max(0, state.ticks - 1); state.baseFace = null; } 
+                else { state.ticks++; }
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "班長驚訝之餘露出了欣慰的甜笑，偷偷在筆記本夾了約會券！", effects: {wisdom: 25}, bonds: "莉莉安" }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 75，跟不上班長的思緒</span>", check: () => false });
+          }
+          if (s.charm > 70) {
+            b.push({ name: "魅力檢定", task: "對著鏡頭「歪頭」並展現「帶有電力、壞壞的微笑」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rawFace) => {
+                let isTilt = rawFace && Math.abs(rawFace[33].y - rawFace[263].y) > 0.05;
+                if (isTilt && f.isSmile) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "班長被你盯到滿臉通紅大喊笨蛋！好感度直接爆表！", effects: {charm: 20}, bonds: "莉莉安" }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 70，不會放電</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "你開始打瞌睡或眼神飄移，班長氣得拿課本敲你的頭：「不理你了，笨蛋！」", effects: {wisdom: -5} }
+      },
+      {
+        id: 9, title: "【青梅竹馬的「雨天共撐一把傘」】",
+        desc: "放學時突然下起大雨。萊利撐著傘走過來，眼神飄向別處，彆扭地遞到你面前：「喏……我的傘很大，勉強分你一半啦，還不快點過來！」",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.charm > 75) {
+            b.push({ name: "魅力檢定", task: "立刻將「頭部微幅傾斜」，並對著鏡頭「露齒微笑」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rawFace) => {
+                let isTilt = rawFace && Math.abs(rawFace[33].y - rawFace[263].y) > 0.05;
+                if (isTilt && f.isSmile && f.mouthOpen) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "萊利臉紅得像番茄，一路上心跳聲大到蓋過雨聲！解鎖稱號【青梅竹馬終結者】！", effects: {charm: 20, health: 10}, bonds: "萊利" }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 75，無法施展無自覺的放電</span>", check: () => false });
+          }
+          if (s.wisdom > 70) {
+            b.push({ name: "智慧檢定", task: "右手放在太陽穴旁「比出☝️」，保持「腹黑/憋笑」",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rawFace) => {
+                let hasPoint = h.some(hand => getHandState(hand) === 'POINT');
+                let nearTemple = rawFace && h.some(hand => dist(hand[8], rawFace[234]) < 0.4 || dist(hand[8], rawFace[454]) < 0.4);
+                if (hasPoint && nearTemple && !f.isSmile && !f.isFrown) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 40,
+              success: { msg: "你笑說「你是故意只帶一把傘的吧？」，萊利當場心虛結巴，約會成功！", effects: {wisdom: 20}, bonds: "萊利" }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 70，看不出這點小心機</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "你像個榆木腦袋說要淋雨回家，萊利氣到跺腳。", effects: {health: -15, charm: -5} }
+      },
+      {
+        id: 10, title: "【熱血體育班隊長的「夕陽下看台飲料」】",
+        desc: "體育班隊長艾斯全身大汗朝你跑來，把一瓶冰飲料貼在你臉上：「剛剛那一球我帥吧？我有看到你在看我喔！這瓶請你喝！」",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.courage > 80) {
+            b.push({ name: "勇氣檢定", task: "2 秒內伸出右手「比出✋(模擬拿飲料)」，面部嚴肅不笑",
+              setup: (state) => { state.startTime = Date.now(); state.fail = false; },
+              update: (state, h, f) => {
+                let elapsed = (Date.now() - state.startTime) / 1000;
+                if (elapsed > 2 && !state.done) state.fail = true;
+                if (h.some(hand => getHandState(hand) === 'PALM') && !f.isSmile && elapsed <= 2) state.done = true;
+              },
+              checkEnd: (state) => state.fail ? 'fail' : (state.done ? true : false),
+              success: { msg: "你順手拍拍他的頭：「我看的是你不是球。」隊長當場燒起來！", effects: {courage: 30}, bonds: "艾斯" },
+              fail: { msg: "動作慢了一拍，沒拿到飲料。", effects: {} }
+            });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 80，不敢直接摸他的頭</span>", check: () => false });
+          }
+          if (s.charm > 80) {
+            b.push({ name: "魅力檢定", task: "3 秒內「雙手瘋狂上下揮舞(應援)」同時「大笑」",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rF, vel) => {
+                if (h.length >= 2 && vel > 0.03 && f.isSmile && f.mouthOpen) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "你像小太陽的應援讓他疲勞全消，傻笑著抓抓頭！", effects: {charm: 25, health: 10}, bonds: "艾斯" }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 80，做不出熱情的啦啦隊動作</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "你表現冷漠推開飲料，隊長眼神瞬間垮下來落寞走開。", effects: {charm: -10} }
+      },
+      {
+        id: 11, title: "【神秘不良轉學生的「天台壁咚修羅場」】",
+        desc: "不良太妹卡加莎臉上帶著傷，突然衝過來將你壁咚在鐵門上，臉湊得極近：「喂！全校都怕我……你也會想逃跑嗎？回答我！」",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.courage > 85) {
+            b.push({ name: "勇氣檢定", task: "「雙手抱胸」並且「憤怒皺眉/死死盯著螢幕不眨眼」",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => {
+                if (!f.isSmile && f.isFrown && !f.eyesClosed) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "你大膽反問「為什麼要逃？」卡加莎氣勢崩潰紅著臉大喊！成功收服！", effects: {courage: 35}, bonds: "卡加莎" }
+            });
+          } else {
+            b.push({ name: "勇氣檢定", task: "<span style='color:#9ca3af'>🔒 勇氣不足 85，被太妹的氣勢完全壓制</span>", check: () => false });
+          }
+          if (s.charm > 75) {
+            b.push({ name: "動漫哭哭演技檢定", task: "雙手(或單手)握拳在眼睛兩側「揮動(大哭)」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f, rF, vel) => {
+                if (h.length >= 1 && rF) {
+                  // 檢查手掌是否在眼睛或臉頰兩側 (加入 234, 454 臉頰兩側特徵點)
+                  let isNearEyes = h.some(hand => dist(hand[9], rF[159]) < 0.5 || dist(hand[9], rF[386]) < 0.5 || dist(hand[9], rF[234]) < 0.5 || dist(hand[9], rF[454]) < 0.5);
+                  // 取消容易在側視角誤判的嚴格 FIST 限制，並將揮動門檻降到極低 (0.005)
+                  // 只要手放在臉龐兩側且有微幅擺動，就無條件過關！
+                  if (isNearEyes && vel > 0.005) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1);
+                } else {
+                  state.ticks = Math.max(0, state.ticks - 1);
+                }
+              },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "卡加莎慌到手忙腳亂瘋狂道歉，還分你棒棒糖！好感度滿點！", effects: {charm: 30}, bonds: "卡加莎" }
+            });
+          } else {
+            b.push({ name: "動漫哭哭演技檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 75，裝不出讓人心疼的超萌哭泣</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "你嚇到僵住，卡加莎覺得你很無趣，踢了垃圾桶離開。", effects: {charm: -15} }
+      },
+      {
+        id: 12, title: "【週會演講！絕對不能睡著的考驗】",
+        desc: "校長的聲音像念經，周圍的同學倒了一片，訓導主任正拿著棍子在巡視！",
+        time: 5, isImmediate: false,
+        getBranches: (s) => {
+          let b = [];
+          if (s.wisdom > 70) {
+            b.push({ name: "智慧檢定", task: "雙眼盯著鏡頭「不眨眼」並保持「嚴肅(皺眉)」維持 3 秒",
+              setup: (state) => { state.ticks = 0; },
+              update: (state, h, f) => { if (!f.eyesClosed && f.isFrown) state.ticks++; else state.ticks = Math.max(0, state.ticks - 1); },
+              checkEnd: (state) => state.ticks >= 60,
+              success: { msg: "開啟「睜眼冥想」，主任以為你在做筆記特地走過去！", effects: {wisdom: 20} }
+            });
+          } else {
+            b.push({ name: "智慧檢定", task: "<span style='color:#9ca3af'>🔒 智慧不足 70，學不會睜眼冥想</span>", check: () => false });
+          }
+          if (s.charm > 75) {
+            b.push({ name: "魅力檢定", task: "對著鏡頭「瘋狂點頭(頭部上下位移)」並「保持微笑」",
+              setup: (state) => { state.lastY = null; state.nods = 0; },
+              update: (state, h, f, rawFace) => {
+                if (!rawFace) return;
+                if (!state.lastY) state.lastY = rawFace[1].y;
+                if (Math.abs(rawFace[1].y - state.lastY) > 0.05) { state.nods++; state.lastY = rawFace[1].y; }
+                if (state.nods >= 4 && f.isSmile) state.done = true;
+              },
+              checkEnd: (state) => state.done,
+              success: { msg: "主任覺得你太優秀了，事後在聯絡簿大加分！", effects: {charm: 20} }
+            });
+          } else {
+            b.push({ name: "魅力檢定", task: "<span style='color:#9ca3af'>🔒 魅力不足 75，無法假裝出陽光好學生模樣</span>", check: () => false });
+          }
+          return b;
+        },
+        fail: { msg: "打瞌睡被訓導主任一棍子敲醒，當眾罰站到週會結束。", effects: {health: -10, charm: -15} }
+      }
+    ];
+
+    // 從 12 個事件中隨機挑選 5 個遊玩
+    selectedEvents = [...EVENTS].sort(() => 0.5 - Math.random()).slice(0, 5);
+
+    const videoElement = document.getElementById('video');
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults((res) => {
+      if (res.multiFaceLandmarks && res.multiFaceLandmarks.length > 0) {
+        latestRawFace = res.multiFaceLandmarks[0];
+        let faceW = dist(latestRawFace[234], latestRawFace[454]) || 1; 
+        let faceH = dist(latestRawFace[10], latestRawFace[152]) || 1;  
+        let mouthDist = dist(latestRawFace[13], latestRawFace[14]);    
+        let mouthRatio = mouthDist / faceH;
+        latestFace = {
+          isSmile: (dist(latestRawFace[61], latestRawFace[291]) / faceW) > 0.34, // 調高閾值，避免天然寬嘴角被誤判為微笑
+          isFrown: (dist(latestRawFace[107], latestRawFace[336]) / faceW) < 0.29, 
+          mouthOpen: mouthRatio > 0.010, 
+          eyesClosed: (dist(latestRawFace[159], latestRawFace[145]) / faceH) < 0.050 && (dist(latestRawFace[386], latestRawFace[374]) / faceH) < 0.050 
+        };
+      } 
+    });
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults((res) => {
+      if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        latestHands = res.multiHandLandmarks;
+        let vel = 0;
+        latestHands.forEach(hand => {
+          if (prevHands.length > 0) {
+            let minDist = Math.min(...prevHands.map(ph => dist(hand[9], ph[9])));
+            vel = Math.max(vel, minDist); 
+          }
+        });
+        latestHandVel = vel;
+        prevHands = latestHands;
+      } else { latestHands = []; latestHandVel = 0; prevHands = []; }
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        try {
+          await faceMesh.send({image: videoElement});
+          await hands.send({image: videoElement});
+        } catch (err) {}
+      }, width: 640, height: 480
+    });
+
+    camera.start().then(() => {
+      document.getElementById('loading-screen').style.opacity = '0';
+      setTimeout(() => document.getElementById('loading-screen').style.display = 'none', 500);
+      startNextEvent();
+      requestAnimationFrame(gameLoop);
+    });
+
+    function startNextEvent() {
+      if (currentEventIndex >= selectedEvents.length) {
+         let title = "平凡高中生";
+         if (playerStats.charm > 80) title = "校園萬人迷";
+         else if (playerStats.courage > 80) title = "熱血風雲人物";
+         else if (playerStats.wisdom > 80) title = "無敵學霸天才";
+
+         let bondsText = playerStats.bonds && playerStats.bonds.length > 0
+             ? `<br><br>💖 解鎖羈絆：<span style="color:#ec4899; font-weight:bold;">${playerStats.bonds.join('、')}</span>`
+             : "<br><br>💔 感情狀態：<span style='color:#9ca3af;'>母胎單身 (專注學業)</span>";
+
+         document.getElementById('d-title').innerText = "🎓 畢業典禮！";
+         document.getElementById('d-desc').innerHTML = `時光荏苒，你的校園時代畫下完美句點！<br><br>你的校園稱號是：<span style="color:#e11d48; font-size:1.5rem; font-weight:bold;">【${title}】</span>${bondsText}<br><br><span style='color:#0284c7'>即將面臨成人社會的挑戰... 請領取你的畢業證書！</span>`;
+         document.getElementById('d-tasks').style.display = "none";
+         btnAction.style.display = "block";
+         btnAction.innerText = "📜 領取畢業證書";
+         btnAction.onclick = () => window.location.href = "adult.html";
+         return;
+      }
+      
+      activeEvent = selectedEvents[currentEventIndex];
+      document.getElementById('d-title').innerText = activeEvent.title;
+      document.getElementById('d-desc').innerText = activeEvent.desc;
+      
+      activeBranches = activeEvent.getBranches(playerStats);
+      
+      let taskHTML = "<ul>";
+      activeBranches.forEach(b => { taskHTML += `<li><span class="branch-name">[${b.name}]</span>: ${b.task}</li>`; });
+      taskHTML += "</ul>";
+      
+      document.getElementById('d-tasks').innerHTML = taskHTML;
+      document.getElementById('d-tasks').style.display = "block";
+      document.getElementById('d-timer').innerText = `限時: ${activeEvent.time} 秒`;
+      
+      btnAction.innerText = "準備挑戰";
+      btnAction.disabled = false;
+      btnAction.onclick = () => startChallenge();
+    }
+
+    function startChallenge() {
+      btnAction.disabled = true;
+      eventState = {};
+      activeBranches.forEach(b => { 
+        eventState[b.name] = {};
+        if (b.setup) b.setup(eventState[b.name]); 
+      });
+      
+      timeRemaining = activeEvent.time;
+      document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+      document.getElementById('d-desc').innerText = "事件開始！請依照任務指示做出表情或動作。";
+      isPlayingEvent = true;
+      
+      eventTimer = setInterval(() => {
+          timeRemaining--;
+          document.getElementById('d-timer').innerText = `剩餘時間: ${timeRemaining} 秒`;
+          if (timeRemaining <= 0) onTimeout();
+      }, 1000);
+    }
+
+    function gameLoop() {
+      requestAnimationFrame(gameLoop);
+
+      ctx.clearRect(0,0,640,480);
+      drawDetectionOverlay();
+
+      if (isPlayingEvent) {
+         if (activeEvent.isImmediate) {
+            const safeFace = latestFace || {};
+            const safeRawFace = latestRawFace || Array.from({length: 468}, () => ({x:0, y:0}));
+            for(let b of activeBranches) {
+               if (b.check && b.check(latestHands, safeFace, safeRawFace, latestHandVel)) {
+                   finishEvent(b.success); return;
+               }
+            }
+         } else {
+            for (let branch of activeBranches) {
+              let st = eventState[branch.name];
+              if (branch.update) branch.update(st, latestHands, latestFace, latestRawFace, latestHandVel);
+              if (branch.draw) branch.draw(st, ctx, {w: 640, h: 480});
+              if (branch.checkEnd) { 
+                let res = branch.checkEnd(st);
+                if(res === true) { finishEvent(branch.success); return; }
+                if(res === 'fail') { finishEvent(branch.fail); return; }
+              }
+            }
+         }
+      }
+    }
+
+    function drawDetectionOverlay() {
+      ctx.save();
+      ctx.translate(640, 0);
+      ctx.scale(-1, 1);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(15, 15, 220, 75);
+      ctx.font = "18px sans-serif";
+      ctx.fillStyle = "#fef08a";
+
+      let faceStatus = "😐 平靜";
+      if(latestFace) {
+         if(latestFace.isSmile) faceStatus = "😁 微笑";
+         else if(latestFace.isFrown) faceStatus = "😠 皺眉";
+         if(latestFace.eyesClosed) faceStatus += " 😑 閉眼";
+         if(latestFace.mouthOpen) faceStatus += " 😬 露齒/張嘴";
+      } else { faceStatus = "未偵測到臉"; }
+      ctx.fillText(`臉部: ${faceStatus}`, 25, 42);
+
+      let hStates = latestHands.length > 0 ? latestHands.map(h => {
+          if (latestHandVel > 0.015) return '✋ 揮動';
+          let s = getHandState(h);
+          return s==='FIST' ? '✊ 握拳' : s==='PALM' ? '🖐️ 張開' : s==='V' ? '✌️ 剪刀' : s==='POINT' ? '☝️ 指' : '🖐️ 其他';
+      }).join(', ') : '未偵測到手';
+      ctx.fillText(`手勢: ${hStates}`, 25, 72);
+      ctx.restore();
+    }
+
+    function onTimeout() {
+      isPlayingEvent = false; clearInterval(eventTimer); 
+      
+      let timeoutBranch = activeBranches.find(b => b.successOnTimeout || b.fail);
+      if (!activeEvent.isImmediate && timeoutBranch) {
+          if (timeoutBranch.successOnTimeout) finishEvent(timeoutBranch.success);
+          else if (timeoutBranch.fail) finishEvent(timeoutBranch.fail);
+          else finishEvent({msg: "時間到，什麼都沒發生。", effects: {}});
+      }
+      else if (activeEvent.fail) finishEvent(activeEvent.fail);
+      else finishEvent({msg: "時間到，什麼都沒發生。", effects: {}});
+    }
+
+    function finishEvent(result) {
+      isPlayingEvent = false; clearInterval(eventTimer);
+      
+      let effectsText = "";
+      if (result.effects) {
+        for(let k in result.effects) {
+           playerStats[k] += result.effects[k];
+           const nameMap = {health: "健康", wealth: "財富", wisdom: "智慧", charm: "魅力", courage: "勇氣"};
+           effectsText += ` 【${nameMap[k]} ${result.effects[k] > 0 ? '+'+result.effects[k] : result.effects[k]}】`;
+        }
+      }
+      
+      if (result.bonds && !playerStats.bonds.includes(result.bonds)) {
+         playerStats.bonds.push(result.bonds);
+         effectsText += `<br>💞 解鎖羈絆：<span style="color:#ec4899; font-weight:bold;">${result.bonds}</span>`;
+      }
+      
+      localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+      updateStatsUI();
+
+      document.getElementById('d-desc').innerHTML = `<b>結果：</b><br>${result.msg}<br><span style="color:#0ea5e9;">${effectsText}</span>`;
+      document.getElementById('d-tasks').style.display = "none";
+      document.getElementById('d-timer').innerText = "";
+      
+      btnAction.innerText = "下一個記憶";
+      btnAction.disabled = false;
+      btnAction.onclick = () => {
+         currentEventIndex++;
+         startNextEvent();
+      };
+    }
+  </script>
+</body>
+</html>

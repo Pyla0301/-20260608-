@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人生模擬器 - 屬性分析</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+  
+  <!-- 引入 MediaPipe 機器學習庫 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body, html {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      font-family: 'M PLUS Rounded 1c', '微軟正黑體', sans-serif;
+      background: linear-gradient(135deg, #c4b5fd 0%, #fbcfe8 50%, #fdba74 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow-x: hidden;
+    }
+
+    h1 {
+      color: #ffffff;
+      text-shadow: 0 4px 10px rgba(139, 92, 246, 0.4), 2px 2px 0px rgba(253, 186, 116, 0.9);
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    #status-text {
+      color: #fff1f2;
+      font-size: 1.2rem;
+      margin-bottom: 20px;
+      text-shadow: 1px 1px 4px rgba(139, 92, 246, 0.5);
+      background: rgba(255, 255, 255, 0.2);
+      padding: 10px 20px;
+      border-radius: 20px;
+    }
+
+    .camera-wrapper {
+      position: relative;
+      width: 640px;
+      max-width: 90vw;
+      aspect-ratio: 4/3;
+      background: #000;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 15px 35px rgba(109, 40, 217, 0.3);
+      border: 5px solid rgba(255, 255, 255, 0.5);
+    }
+
+    /* 影像與畫布互相重疊，並運用 transform 水平翻轉以符合鏡像直覺 */
+    video, canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    /* 屬性結果面板 */
+    #attribute-panel {
+      display: none;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 30px;
+      border-radius: 20px;
+      width: 640px;
+      max-width: 90vw;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      text-align: left;
+    }
+    #attribute-panel.show { display: block; animation: fadeIn 0.8s ease forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, -30%); } to { opacity: 1; transform: translate(-50%, -50%); } }
+
+    .attr-row { margin-bottom: 15px; }
+    .attr-name { font-weight: bold; margin-bottom: 8px; color: #5b21b6; font-size: 1.1rem; }
+    .attr-bar-bg { background: #e5e7eb; height: 24px; border-radius: 12px; overflow: hidden; position: relative; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);}
+    .attr-bar { height: 100%; width: 0%; transition: width 1.5s cubic-bezier(0.4, 0, 0.2, 1); }
+    .attr-val { position: absolute; right: 15px; top: 0; line-height: 24px; font-size: 0.9rem; color: #fff; font-weight: bold; text-shadow: 1px 1px 2px rgba(0,0,0,0.3);}
+    
+    .bar-wisdom { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+    .bar-charm { background: linear-gradient(90deg, #f472b6, #ec4899); }
+    .bar-courage { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+
+    /* 確認按鈕樣式 */
+    .confirm-btn {
+      padding: 10px 30px;
+      font-size: 1.2rem;
+      font-family: inherit;
+      color: #ffffff;
+      background: linear-gradient(120deg, #8b5cf6, #d946ef);
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+    .confirm-btn:hover { transform: scale(1.05); }
+
+    /* 說明頁面(Modal) 樣式 */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px);
+      display: flex; justify-content: center; align-items: center;
+      z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+    }
+    .modal-overlay.active {
+      opacity: 1; pointer-events: auto;
+    }
+    .modal-content {
+      background: rgba(255, 255, 255, 0.95); width: 90%; max-width: 550px;
+      border-radius: 25px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+      transform: translateY(20px); transition: transform 0.3s ease;
+      color: #334155;
+    }
+    .modal-overlay.active .modal-content {
+      transform: translateY(0);
+    }
+    .modal-content h2 { color: #8b5cf6; margin-top: 0; text-align: center; border-bottom: 3px dashed #c4b5fd; padding-bottom: 15px; font-size: 1.8rem; }
+    .modal-body { line-height: 1.7; font-size: 1.15rem; margin-bottom: 25px; }
+    .modal-body ul { padding-left: 20px; color: #4c1d95; font-weight: bold; }
+    .modal-body li { margin-bottom: 10px; }
+    .close-btn {
+      display: block; width: 100%; padding: 15px;
+      background: linear-gradient(120deg, #8b5cf6, #d946ef); color: #fff; border: none; border-radius: 15px;
+      font-size: 1.3rem; font-weight: bold; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .close-btn:hover { transform: scale(1.02); box-shadow: 0 5px 15px rgba(217, 70, 239, 0.4); }
+  </style>
+</head>
+<body>
+
+  <h1>表情分析系統啟動</h1>
+  <div id="status-text">正在載入 AI 模型與開啟攝像機...</div>
+
+  <div class="camera-wrapper" id="camera-wrapper">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="face-canvas" width="640" height="480"></canvas>
+    <canvas id="hand-canvas" width="640" height="480"></canvas>
+  </div>
+
+  <div id="attribute-panel">
+    <h2 style="color: #4c1d95; text-align: center; margin-top:0;">✨ 你的初始屬性 ✨</h2>
+    
+    <div class="attr-row">
+      <div class="attr-name">💡 智慧 (Wisdom) - 來自你深邃的眉宇</div>
+      <div class="attr-bar-bg"><div id="wisdom-bar" class="attr-bar bar-wisdom"><span id="wisdom-val" class="attr-val">0</span></div></div>
+    </div>
+    
+    <div class="attr-row">
+      <div class="attr-name">💖 魅力 (Charm) - 來自你燦爛的笑容</div>
+      <div class="attr-bar-bg"><div id="charm-bar" class="attr-bar bar-charm"><span id="charm-val" class="attr-val">0</span></div></div>
+    </div>
+    
+    <div class="attr-row">
+      <div class="attr-name">⚔️ 勇氣 (Courage) - 來自你無畏的姿態</div>
+      <div class="attr-bar-bg"><div id="courage-bar" class="attr-bar bar-courage"><span id="courage-val" class="attr-val">0</span></div></div>
+    </div>
+
+    <div style="text-align: center; margin-top: 25px;">
+      <button class="confirm-btn" onclick="startGame()">踏上旅程</button>
+    </div>
+  </div>
+
+  <!-- 準備彈出視窗 -->
+  <div id="prep-modal" class="modal-overlay active">
+    <div class="modal-content">
+      <h2>🎭 準備生成初始屬性</h2>
+      <div class="modal-body">
+        <p>接下來，AI 將透過鏡頭掃描你的五官與表情，為你生成獨一無二的初始屬性！</p>
+        <ul>
+          <li>稍微皺眉 ➔ 提升「智慧」與「勇氣」</li>
+          <li>燦爛微笑 ➔ 提升「魅力」與「勇氣」</li>
+          <li>比出 YA ✌️ ➔ 全屬性隱藏加成</li>
+        </ul>
+        <p>請允許瀏覽器的相機權限，並準備好你最棒的表情。按下按鈕後只要偵測到臉部，就會開始 <strong>5 秒鐘</strong> 的分析倒數！</p>
+      </div>
+      <button class="close-btn" onclick="startReady()">我準備好了！開始掃描</button>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('video');
+    const faceCanvas = document.getElementById('face-canvas');
+    const faceCtx = faceCanvas.getContext('2d');
+    const handCanvas = document.getElementById('hand-canvas');
+    const handCtx = handCanvas.getContext('2d');
+    const statusText = document.getElementById('status-text');
+    const attrPanel = document.getElementById('attribute-panel');
+
+    let isScanning = false;
+    let scanFinished = false;
+    let scanTimeLeft = 5; 
+    let readyToScan = false;
+    
+    // 記錄分析期間的最大強度
+    let maxSmile = 0;
+    let maxFrown = 0;
+    let yaDetected = false;
+
+    // 初始化 Face Mesh
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults(onFaceResults);
+
+    // 初始化 Hands
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onHandResults);
+
+    // 啟動相機 (同時給 Face 與 Hand 模型分析)
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        if(scanFinished) return;
+        try {
+          await faceMesh.send({image: videoElement}); // 必須依序等待，並行會導致瀏覽器 WebGL 崩潰卡死
+          await hands.send({image: videoElement});
+        } catch (err) {
+          console.warn("AI 載入或分析中:", err);
+        }
+      },
+      width: 640, height: 480
+    });
+    camera.start().then(() => {
+        statusText.innerText = "攝像機已開啟！AI 引擎下載中 (約需 10~20 秒，請維持在鏡頭前等待)...";
+    });
+
+    // 計算兩點距離
+    function dist(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+
+    // 當捕捉到臉部時
+    function onFaceResults(results) {
+      faceCtx.save();
+      faceCtx.clearRect(0, 0, faceCanvas.width, faceCanvas.height);
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        if (readyToScan && !isScanning && !scanFinished) startScan(); // 偵測到人臉且按下準備後才開始倒數
+
+        const landmarks = results.multiFaceLandmarks[0];
+        drawConnectors(faceCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C040', lineWidth: 1});
+        drawConnectors(faceCtx, landmarks, FACEMESH_LIPS, {color: '#FF3030', lineWidth: 2});
+        drawConnectors(faceCtx, landmarks, FACEMESH_LEFT_EYEBROW, {color: '#30FF30', lineWidth: 2});
+        drawConnectors(faceCtx, landmarks, FACEMESH_RIGHT_EYEBROW, {color: '#30FF30', lineWidth: 2});
+
+        // 分析微笑 (嘴角寬度 / 臉部寬度)
+        const smileWidth = dist(landmarks[61], landmarks[291]);
+        const faceWidth = dist(landmarks[234], landmarks[454]);
+        const smileRatio = smileWidth / faceWidth;
+        const smileIntensity = Math.max(0, Math.min(1, (smileRatio - 0.33) / 0.12)); 
+        maxSmile = Math.max(maxSmile, smileIntensity);
+
+        // 分析皺眉 (雙眉間距 / 臉部寬度)
+        const browDist = dist(landmarks[107], landmarks[336]);
+        const frownRatio = browDist / faceWidth;
+        const frownIntensity = Math.max(0, Math.min(1, (0.25 - frownRatio) / 0.05)); // 微調皺眉判定門檻，避免太容易滿分
+        maxFrown = Math.max(maxFrown, frownIntensity);
+      }
+      faceCtx.restore();
+    }
+
+    // 當捕捉到手部時
+    function onHandResults(results) {
+      handCtx.save();
+      handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        drawConnectors(handCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
+        drawLandmarks(handCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
+
+        // YA手勢偵測: 食指與中指伸直(高於關節)，無名指與小指彎曲(低於關節)
+        const isYa = (landmarks[8].y < landmarks[6].y) && (landmarks[12].y < landmarks[10].y) && 
+                     (landmarks[16].y > landmarks[14].y) && (landmarks[20].y > landmarks[18].y);
+        if (isYa) yaDetected = true;
+      }
+      handCtx.restore();
+    }
+
+    // 關閉準備彈窗並允許開始掃描
+    function startReady() {
+      document.getElementById('prep-modal').classList.remove('active');
+      readyToScan = true;
+    }
+
+    // 控制分析時間流
+    function startScan() {
+      isScanning = true;
+      const timer = setInterval(() => {
+        scanTimeLeft--;
+        statusText.innerText = `AI 正在深入分析你... 剩下 ${scanTimeLeft} 秒`;
+        if(scanTimeLeft <= 0) {
+          clearInterval(timer);
+          finishScan();
+        }
+      }, 1000);
+    }
+
+    // 結算並顯示屬性面板
+    function finishScan() {
+      scanFinished = true;
+      videoElement.pause(); // 掃描完成後，凍結攝影機畫面
+      statusText.innerText = "分析完成！命運之門已開啟。";
+      
+      // 計算最終屬性分數 (0~100)
+      const wisdom = Math.min(100, Math.floor(40 + (maxFrown * 50) + (yaDetected ? 10 : 0)));
+      const charm = Math.min(100, Math.floor(40 + (maxSmile * 50) + (yaDetected ? 10 : 0)));
+      const courage = Math.min(100, Math.floor(30 + (maxSmile * 20) + (maxFrown * 20) + (yaDetected ? 30 : 0)));
+
+      attrPanel.classList.add('show');
+      
+      // CSS 動畫填充跑條
+      setTimeout(() => {
+        document.getElementById('wisdom-bar').style.width = wisdom + '%';
+        document.getElementById('wisdom-val').innerText = wisdom;
+        document.getElementById('charm-bar').style.width = charm + '%';
+        document.getElementById('charm-val').innerText = charm;
+        document.getElementById('courage-bar').style.width = courage + '%';
+        document.getElementById('courage-val').innerText = courage;
+      }, 100);
+    }
+
+    // 儲存屬性並進入遊戲
+    function startGame() {
+      const playerStats = {
+        wisdom: parseInt(document.getElementById('wisdom-val').innerText),
+        charm: parseInt(document.getElementById('charm-val').innerText),
+        courage: parseInt(document.getElementById('courage-val').innerText)
+      };
+      // 將初始屬性存入瀏覽器儲存空間，以供後續遊戲畫面讀取
+      localStorage.setItem('playerAttributes', JSON.stringify(playerStats));
+      
+      // 跳轉至正式遊戲畫面 (假設為 game.html)
+      window.location.href = 'game.html';
+    }
+  </script>
+</body>
+</html>

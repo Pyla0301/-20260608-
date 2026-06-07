@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>水彩漸層與手繪風景</title>
+  <!-- 引入可愛的圓體字型 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700&display=swap" rel="stylesheet">
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* 標題與副標題樣式 */
+    .title-container {
+      position: absolute;
+      top: 8%;
+      width: 100%;
+      text-align: center;
+      font-family: 'M PLUS Rounded 1c', 'Comic Sans MS', '微軟正黑體', sans-serif;
+      z-index: 10;
+      color: #ffffff;
+      text-shadow: 0 4px 10px rgba(139, 92, 246, 0.4), 3px 3px 0px rgba(253, 186, 116, 0.9);
+    }
+
+    .main-title {
+      font-size: 4.5rem;
+      margin: 0 0 15px 0;
+      letter-spacing: 5px;
+    }
+
+    .sub-title {
+      font-size: 1.8rem;
+      margin: 0;
+      letter-spacing: 3px;
+      color: #fff1f2;
+    }
+
+    /* 水彩漸層背景：淡紫 (#c4b5fd) 經過柔和粉色過渡到 暖橘 (#fdba74) */
+    .watercolor-scene {
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(135deg, #c4b5fd 0%, #fbcfe8 50%, #fdba74 100%);
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+    }
+
+    /* 確保 SVG 滿版且比例正確 */
+    .scene-svg {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    /* 讓星星閃爍的簡單動畫 */
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.3; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
+
+    .star {
+      animation: twinkle 3s infinite ease-in-out;
+      transform-origin: center;
+    }
+    .star:nth-child(even) { animation-duration: 4s; animation-delay: 1s; }
+    .star:nth-child(3n) { animation-duration: 2.5s; animation-delay: 0.5s; }
+
+    /* 按鈕容器 */
+    .button-container {
+      position: absolute;
+      bottom: 15%;
+      width: 100%;
+      text-align: center;
+      z-index: 10;
+    }
+
+    /* 水彩風按鈕 */
+    .watercolor-btn {
+      padding: 15px 45px;
+      font-size: 1.6rem;
+      font-family: inherit;
+      color: #ffffff;
+      background: linear-gradient(120deg, #ffc8fb, #ffaaea, #ffc6ff);
+      border: none;
+      /* 利用不規則圓角模擬水彩筆觸的自然暈染形狀 */
+      border-radius: 40px 15px 50px 20px / 20px 40px 15px 50px;
+      cursor: pointer;
+      box-shadow: 3px 5px 20px rgba(228, 193, 249, 0.5), -3px -5px 20px rgba(208, 244, 222, 0.5);
+      transition: all 0.3s ease;
+      text-shadow: 1px 1px 4px rgba(139, 92, 246, 0.7);
+      animation: float 4s ease-in-out infinite;
+    }
+
+    .watercolor-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 4px 6px 25px rgba(228, 193, 249, 0.7), -4px -6px 25px rgba(208, 244, 222, 0.7);
+      border-radius: 15px 40px 20px 50px / 40px 20px 50px 15px; /* Hover 時稍微改變形狀產生動態感 */
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-8px); }
+    }
+
+    /* 說明頁面(Modal) 樣式 */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px);
+      display: flex; justify-content: center; align-items: center;
+      z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
+    }
+    .modal-overlay.active {
+      opacity: 1; pointer-events: auto;
+    }
+    .modal-content {
+      background: rgba(255, 255, 255, 0.95); width: 90%; max-width: 650px;
+      border-radius: 25px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+      transform: translateY(20px); transition: transform 0.3s ease;
+      color: #334155; font-family: 'M PLUS Rounded 1c', '微軟正黑體', sans-serif;
+      text-align: left; max-height: 80vh; overflow-y: auto;
+    }
+    .modal-overlay.active .modal-content {
+      transform: translateY(0);
+    }
+    .modal-content h2 { color: #db2777; margin-top: 0; text-align: center; border-bottom: 3px dashed #fbcfe8; padding-bottom: 15px; font-size: 2rem; }
+    .modal-body { line-height: 1.7; font-size: 1.15rem; }
+    .modal-body ul { padding-left: 25px; }
+    .modal-body li { margin-bottom: 12px; }
+    .modal-body strong { color: #0ea5e9; }
+    .close-btn {
+      display: block; width: 100%; margin-top: 25px; padding: 15px;
+      background: linear-gradient(120deg, #f472b6, #ec4899); color: #fff; border: none; border-radius: 15px;
+      font-size: 1.3rem; font-weight: bold; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .close-btn:hover { transform: scale(1.02); box-shadow: 0 5px 15px rgba(236, 72, 153, 0.4); }
+
+    /* 首頁的作品說明小按鈕 */
+    .about-btn {
+      font-size: 1.2rem; padding: 12px 35px; margin-top: 20px;
+      background: linear-gradient(120deg, #bae6fd, #7dd3fc); color: #0369a1;
+      box-shadow: 3px 5px 20px rgba(186, 230, 253, 0.5), -3px -5px 20px rgba(125, 211, 252, 0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="watercolor-scene">
+    <!-- 標題區塊 -->
+    <div class="title-container">
+      <h1 class="main-title">人生模擬器</h1>
+      <p class="sub-title">你的表情，決定你的人生</p>
+    </div>
+
+    <!-- 水彩按鈕區塊 -->
+    <div class="button-container">
+      <button class="watercolor-btn" onclick="window.location.href='analysis.html'">開始新人生</button>
+      <br>
+      <button class="watercolor-btn about-btn" onclick="document.getElementById('about-modal').classList.add('active')">📖 玩法與作品說明</button>
+    </div>
+
+    <svg class="scene-svg" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMax slice" xmlns="http://www.w3.org/2000/svg">
+      
+      <!-- 定義手繪風濾鏡 -->
+      <defs>
+        <filter id="hand-drawn-filter" x="-10%" y="-10%" width="120%" height="120%">
+          <!-- 產生柏林雜訊 (Perlin Noise) -->
+          <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="3" result="noise" />
+          <!-- 利用雜訊讓圖形邊緣產生位移，達到手繪不規則感 -->
+          <feDisplacementMap in="SourceGraphic" in2="noise" scale="4" xChannelSelector="R" yChannelSelector="G" />
+        </filter>
+      </defs>
+
+      <!-- 所有手繪元素套用濾鏡 -->
+      <g filter="url(#hand-drawn-filter)">
+        
+        <!-- 星星 (手繪十字星與點點) -->
+        <g stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path class="star" d="M 150 80 L 150 100 M 140 90 L 160 90" />
+          <path class="star" d="M 350 120 L 350 130 M 345 125 L 355 125" stroke-width="1.5" />
+          <path class="star" d="M 750 60 L 750 80 M 740 70 L 760 70" />
+          <circle class="star" cx="500" cy="90" r="1.5" fill="#fff" stroke="none" />
+          <circle class="star" cx="850" cy="150" r="2" fill="#fff" stroke="none" />
+          <circle class="star" cx="250" cy="180" r="1" fill="#fff" stroke="none" />
+        </g>
+
+        <!-- 雲朵 (手繪弧線) -->
+        <g stroke="rgba(255, 255, 255, 0.8)" stroke-width="3" fill="rgba(255, 255, 255, 0.3)" stroke-linecap="round" stroke-linejoin="round">
+          <!-- 左邊的雲 -->
+          <path d="M 100 250 Q 120 220 150 230 Q 180 200 220 220 Q 260 210 270 250 Z" />
+          <!-- 右邊的雲 -->
+          <path d="M 700 200 Q 720 180 750 190 Q 780 160 820 180 Q 860 170 870 210 Z" />
+          <!-- 遠處的小雲 -->
+          <path d="M 450 280 Q 460 260 480 270 Q 500 260 520 270 Q 530 280 520 290 Z" fill="none" stroke-width="2"/>
+        </g>
+
+        <!-- 雲朵上的簡單表情：微笑、皺眉、YA -->
+        <g stroke="#ffffff" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <!-- 左雲：皺眉 -->
+          <circle cx="185" cy="225" r="1.5" fill="#ffffff" stroke="none" />
+          <circle cx="205" cy="225" r="1.5" fill="#ffffff" stroke="none" />
+          <path d="M 188 234 Q 195 228 202 234" />
+          
+          <!-- 右雲：微笑 -->
+          <circle cx="775" cy="185" r="1.5" fill="#ffffff" stroke="none" />
+          <circle cx="795" cy="185" r="1.5" fill="#ffffff" stroke="none" />
+          <path d="M 778 192 Q 785 198 792 192" />
+          
+          <!-- 遠處小雲：YA (>ᴗ<) -->
+          <path d="M 482 272 L 485 269 L 488 272" stroke-width="1.5" />
+          <path d="M 494 272 L 497 269 L 500 272" stroke-width="1.5" />
+          <path d="M 488 275 Q 491 278 494 275" stroke-width="1.5" />
+        </g>
+
+        <!-- 山脈 (手繪曲線，重疊產生水彩層次感) -->
+        <g stroke-linecap="round" stroke-linejoin="round">
+          <!-- 後層山脈 (顏色較淡) -->
+          <path d="M -50 600 L 250 350 Q 300 320 350 360 L 700 600" 
+                fill="rgba(139, 92, 246, 0.2)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="3" />
+          
+          <!-- 中層山脈 -->
+          <path d="M 150 600 L 550 280 Q 600 250 650 300 L 1050 600" 
+                fill="rgba(109, 40, 217, 0.25)" stroke="rgba(109, 40, 217, 0.5)" stroke-width="4" />
+          
+          <!-- 前層山脈 (顏色最深，帶點暖色調呼應橘色天空) -->
+          <path d="M -100 600 L 150 450 Q 180 430 220 460 L 500 600" 
+                fill="rgba(88, 28, 135, 0.4)" stroke="rgba(88, 28, 135, 0.7)" stroke-width="4" />
+          <path d="M 400 600 L 800 400 Q 840 380 880 420 L 1100 600" 
+                fill="rgba(88, 28, 135, 0.35)" stroke="rgba(88, 28, 135, 0.6)" stroke-width="4" />
+        </g>
+
+        <!-- 人物剪影 (站在右側山脈舉手 YA) -->
+        <g stroke="rgba(88, 28, 135, 0.9)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <!-- 頭 -->
+          <circle cx="830" cy="370" r="5" fill="rgba(88, 28, 135, 0.9)" stroke="none" />
+          <!-- 身體 -->
+          <path d="M 830 376 L 830 392" />
+          <!-- 雙手高舉 (YA) -->
+          <path d="M 830 380 L 818 368" />
+          <path d="M 830 380 L 842 368" />
+          <!-- 雙腳 -->
+          <path d="M 830 392 L 822 405" />
+          <path d="M 830 392 L 838 405" />
+        </g>
+
+      </g>
+    </svg>
+  </div>
+
+  <!-- 彈出式作品說明頁 -->
+  <div id="about-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h2>📖 關於《人生模擬器》</h2>
+      <div class="modal-body">
+        <p>歡迎來到這款由 <strong>AI 影像辨識技術</strong> 所驅動的沉浸式互動遊戲！在這裡，滑鼠跟鍵盤不是主角，<strong>你的表情與雙手</strong>才是決定命運的關鍵！</p>
+        <h3>🎮 怎麼玩？</h3>
+        <ul>
+          <li><strong>📸 授權相機</strong>：點擊開始後，請允許瀏覽器存取相機（所有畫面僅在本地端即時運算，絕對不會上傳，請安心遊玩）。</li>
+          <li><strong>🚦 做出抉擇</strong>：你將經歷童年、校園、職場與婚姻等不同階段，面對五花八門的突發事件。</li>
+          <li><strong>🕺 肢體挑戰</strong>：根據你想選擇的事件分支（智慧、勇氣、魅力等），在<strong>限時倒數內對著鏡頭做出指定的動作</strong>（例如：燦爛大笑、皺眉嚴肅、瘋狂揮手、比出 ✌️ 剪刀手等）。</li>
+          <li><strong>🌟 改變命運</strong>：挑戰成功將改變你的「五大屬性」，進而解鎖專屬職業、隱藏戀愛羈絆與下一代的特殊基因！</li>
+        </ul>
+        <h3>💡 遊玩小提示</h3>
+        <p>請確保環境<strong>光線明亮</strong>，並且讓你的<strong>臉部與雙手</strong>清楚出現在鏡頭範圍內。準備好展現你的顏藝與演技了嗎？</p>
+      </div>
+      <button class="close-btn" onclick="document.getElementById('about-modal').classList.remove('active')">我準備好了！</button>
+    </div>
+  </div>
+
+</body>
+</html>
